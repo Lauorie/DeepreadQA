@@ -1,9 +1,15 @@
+import dataclasses
+
+import pytest
+
 from deepread_sdk.schema import DocRecord, RawSection, SectionRecord, StructuredDoc
 
 
 def test_raw_section_is_frozen():
     s = RawSection(name="1. Intro", idx=0, content="x", start_pos=0, end_pos=1)
     assert s.name == "1. Intro"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        s.name = "changed"  # type: ignore[misc]
 
 
 def test_doc_record_holds_sections():
