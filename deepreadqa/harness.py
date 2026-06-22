@@ -13,6 +13,7 @@ from .prompts import (COMPOSE_SYSTEM, COMPOSE_USER_TEMPLATE, FORCE_FINAL_PROMPT,
                       FORCE_SUMMARIZE_PROMPT, SYSTEM_PROMPT)
 from .retrieval import SearchIndex
 from .tokens import count_messages_tokens
+from deepread_sdk.tokens import truncate_to_tokens
 from .tools import TOOL_SCHEMAS, ToolBox
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,10 @@ class DeepreadQA:
                 continue
             t = count_messages_tokens([m])
             if used + t > budget:
+                # Only truncate the oversized block if we have no evidence yet
+                # (i.e. this is the newest block and it alone exceeds budget).
+                if used == 0 and budget > 10:
+                    chunks.append(truncate_to_tokens(content, budget))
                 break
             chunks.append(content)
             used += t

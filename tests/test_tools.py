@@ -78,3 +78,22 @@ def test_read_section_truncates_when_over_cap(populated_store):
     box = ToolBox(cfg, reader, SearchIndex(reader))
     out = box.execute("read_section", {"doc_id": "en_paper.md", "section": "2. Method"})
     assert "truncated" in out.lower()
+
+
+def test_read_section_defaults_to_first(populated_store):
+    box = _box(populated_store)
+    out = box.execute("read_section", {"doc_id": "en_paper.md"})
+    assert "not found" not in out.lower()
+    assert "SECTION en_paper.md" in out
+
+
+def test_grep_missing_doc_not_in_seen(populated_store):
+    box = _box(populated_store)
+    box.execute("grep", {"doc_id": "missing.md", "patterns": ["x"]})
+    assert "missing.md" not in box.seen_docs
+
+
+def test_grep_includes_section_name(populated_store):
+    box = _box(populated_store)
+    out = box.execute("grep", {"doc_id": "en_paper.md", "patterns": ["ALE"]})
+    assert "Method" in out

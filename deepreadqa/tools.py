@@ -33,7 +33,8 @@ TOOL_SCHEMAS: list[dict] = [
         "description": "Read one full section by name (from head) or by idx.",
         "parameters": {"type": "object", "properties": {
             "doc_id": {"type": "string"},
-            "section": {"type": "string", "description": "section name"},
+            "section": {"type": "string",
+                        "description": "section name from head's TOC; provide this or idx (if both omitted, the first section is read)"},
             "idx": {"type": "integer", "description": "section index (optional)"}},
             "required": ["doc_id"]}}},
     {"type": "function", "function": {
@@ -121,8 +122,11 @@ class ToolBox:
         return "\n".join(lines)
 
     def _t_read_section(self, args: dict) -> str:
-        s = self._reader.section(args["doc_id"], name=args.get("section"),
-                                 idx=args.get("idx"))
+        name = args.get("section")
+        idx = args.get("idx")
+        if name is None and idx is None:
+            idx = 0  # default to the first section when the model omits both
+        s = self._reader.section(args["doc_id"], name=name, idx=idx)
         self.seen_docs.add(args["doc_id"])
         content = s["content"]
         if count_tokens(content) > self._cfg.section_token_cap:
@@ -150,8 +154,27 @@ class ToolBox:
         patterns = args.get("patterns") or []
         if isinstance(patterns, str):
             patterns = [patterns]
+        raw = self._reader.raw(doc_id)
         self.seen_docs.add(doc_id)
-        lines = self._reader.raw(doc_id).splitlines()
+        lines = raw.splitlines()
+        # char offset of each line start (cae-mds markdown uses \n)
+        line_starts: list[int] = []
+        pos = 0
+        for ln in lines:
+            line_starts.append(pos)
+            pos += len(ln) + 1
+        try:
+            secmap = [(d["start_pos"], d["end_pos"], name)
+                      for name, d in self._reader.json(doc_id)["data"].items()]
+        except Exception:
+            secmap = []
+
+        def _sec_for(off: int) -> str | None:
+            for st, en, nm in secmap:
+                if st <= off < en:
+                    return nm
+            return None
+
         ctx = self._cfg.grep_ctx_lines
         out: list[str] = []
         budget = self._cfg.grep_token_cap
@@ -163,7 +186,9 @@ class ToolBox:
                 if low in line.lower():
                     lo, hi = max(0, i - ctx), min(len(lines), i + ctx + 1)
                     passage = "\n".join(lines[lo:hi])
-                    block = f"[{doc_id} :: '{pat}' near line {i+1}]\n{passage}"
+                    sec = _sec_for(line_starts[i])
+                    tag = f" :: {sec}" if sec else ""
+                    block = f"[{doc_id}{tag} :: '{pat}' near line {i + 1}]\n{passage}"
                     btok = count_tokens(block)
                     if used + btok > budget:
                         out.append("...(grep truncated: token cap reached)")
@@ -179,8 +204,8 @@ class ToolBox:
 
     def _t_read_raw(self, args: dict) -> str:
         doc_id = args["doc_id"]
-        self.seen_docs.add(doc_id)
         raw = self._reader.raw(doc_id)
+        self.seen_docs.add(doc_id)
         if count_tokens(raw) > self._cfg.raw_token_cap:
             raw = (truncate_to_tokens(raw, self._cfg.raw_token_cap)
                    + "\n...(raw truncated at token cap; use read_section/grep)")

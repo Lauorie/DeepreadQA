@@ -118,6 +118,24 @@ def test_collect_evidence_drops_oldest_when_over_budget(populated_store):
     assert "OLD" not in ev
 
 
+def test_collect_evidence_truncates_oversized_latest(populated_store):
+    from deepreadqa.config import Config, Endpoint
+    from deepread_sdk.tokens import count_tokens
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=False, compose_evidence_token_cap=30)
+    qa = DeepreadQA(cfg, llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
+    conv = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "问题：Q"},
+        {"role": "tool", "tool_call_id": "b", "content": "DECISIVE " * 200},
+    ]
+    ev = qa._collect_evidence(conv)
+    assert ev.strip() != ""
+    assert "DECISIVE" in ev
+    assert count_tokens(ev) <= 40
+
+
 def test_local_prune_clean_and_bounded(populated_store):
     reader = Reader(populated_store)
     qa = DeepreadQA(_cfg(), llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
