@@ -36,3 +36,26 @@ def test_build_store_resumable_skips_unchanged(tmp_path):
     stats2 = build_store(FIX, db, enr, max_workers=2)  # second run
     assert stats2["skipped"] == 4
     assert stats2["processed"] == 0
+
+
+class _FailingEnricher:
+    """Enricher that raises for any doc whose title contains `fail_on`."""
+
+    def __init__(self, fail_on: str):
+        self._fail_on = fail_on
+        self._real = Enricher(_StubClient())
+
+    def enrich_document(self, title, doc, language):
+        if self._fail_on in title:
+            raise RuntimeError("boom")
+        return self._real.enrich_document(title, doc, language)
+
+
+def test_build_store_isolates_single_doc_failure(tmp_path):
+    db = tmp_path / "cae.db"
+    enr = _FailingEnricher("Title")  # nested.md has title exactly "Title"
+    stats = build_store(FIX, db, enr, max_workers=2)
+    assert stats["failed"] == 1
+    assert stats["processed"] == 3
+    conn = store.connect(db, read_only=True)
+    assert len(store.list_doc_ids(conn)) == 3

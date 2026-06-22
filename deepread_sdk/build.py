@@ -44,11 +44,15 @@ def process_one(text: str, doc_id: str, enricher: Enricher, *,
 
 
 def build_store(kb_root, db_path, enricher: Enricher, *, max_workers: int = 8,
-                force: bool = False, limit: int | None = None) -> dict:
+                force: bool = False, limit: int | None = None,
+                logger: logging.Logger | None = None) -> dict:
+    logger = logger or logging.getLogger(__name__)
     kb_root = Path(kb_root)
     files = sorted(kb_root.glob("*.md"))
     if limit is not None:
         files = files[:limit]
+    if not files:
+        logger.warning("no .md files found under %s", kb_root)
     conn = store.connect(db_path)
     store.init_schema(conn)
 
