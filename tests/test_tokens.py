@@ -13,3 +13,11 @@ def test_count_tokens_monotonic():
     short = count_tokens("one two three")
     long = count_tokens("one two three four five six seven eight nine ten")
     assert long > short
+
+
+def test_count_tokens_fallback_nonempty_at_least_one(monkeypatch):
+    import deepread_sdk.tokens as tk
+    monkeypatch.setattr(tk, "_ENC", None)
+    assert tk.count_tokens("a") >= 1
+    assert tk.count_tokens("abc") >= 1
+    assert tk.count_tokens("") == 0

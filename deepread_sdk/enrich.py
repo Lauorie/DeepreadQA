@@ -66,22 +66,25 @@ def parse_global_response(raw: str) -> tuple[str, list[str]]:
             tldr_val = obj.get("tldr", "")
             tldr = tldr_val.strip() if isinstance(tldr_val, str) else ""
             return tldr, _coerce_keywords(obj.get("keywords", []))
-    # malformed/truncated but JSON-looking: extract leniently, never dump the blob
-    if "{" in raw and ('"tldr"' in raw or '"keywords"' in raw):
-        tm = _TLDR_RE.search(cleaned)
-        km = _KW_LIST_RE.search(cleaned)
-        tldr = tm.group(1).replace('\\"', '"').replace("\\n", " ").strip() if tm else ""
-        kws = []
-        if km:
-            kws = [k.strip().strip('"').strip() for k in km.group(1).split(",")
-                   if k.strip().strip('"').strip()]
-        else:
-            sm = _KW_STR_RE.search(cleaned)
-            if sm:
-                kws = [k.strip() for k in re.split(r"[,;]", sm.group(1)) if k.strip()]
+    # lenient extraction from malformed / truncated JSON-ish text
+    tm = _TLDR_RE.search(cleaned)
+    km = _KW_LIST_RE.search(cleaned)
+    tldr = tm.group(1).replace('\\"', '"').replace("\\n", " ").strip() if tm else ""
+    kws: list[str] = []
+    if km:
+        kws = [k.strip().strip('"').strip() for k in km.group(1).split(",")
+               if k.strip().strip('"').strip()]
+    else:
+        sm = _KW_STR_RE.search(cleaned)
+        if sm:
+            kws = [k.strip() for k in re.split(r"[,;]", sm.group(1)) if k.strip()]
+    if tm or km or kws:
         return tldr, kws
-    # genuine prose response: raw is a reasonable tldr
-    return raw, []
+    # nothing extracted: a structured/blob response must NOT become the tldr
+    stripped = raw.lstrip()
+    looks_structured = (stripped[:1] in "{[") or ("```" in raw) or \
+        ('"tldr"' in raw) or ('"keywords"' in raw)
+    return ("", []) if looks_structured else (raw, [])
 
 
 def _fallback_tldr(text: str) -> str:

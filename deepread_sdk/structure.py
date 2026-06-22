@@ -47,6 +47,15 @@ def _find_headings(text: str) -> list[tuple[int, int, str]]:
     return out
 
 
+def _slice_offsets(text: str, lo: int, hi: int) -> tuple[str, int, int]:
+    """Return (stripped_content, start, end) such that text[start:end] == stripped."""
+    raw = text[lo:hi]
+    stripped = raw.strip()
+    lead = len(raw) - len(raw.lstrip())
+    start = lo + lead
+    return stripped, start, start + len(stripped)
+
+
 def _line_end_after(text: str, pos: int) -> int:
     nl = text.find("\n", pos)
     return len(text) if nl < 0 else nl + 1
@@ -65,11 +74,11 @@ def recover_structure(text: str, *, fallback_title: str) -> StructuredDoc:
     """
     headings = _find_headings(text)
     if not headings:
+        content, s_start, s_end = _slice_offsets(text, 0, len(text))
         return StructuredDoc(
-            title=fallback_title,
-            header="",
-            sections=[RawSection(name="Full Document", idx=0,
-                                 content=text.strip(), start_pos=0, end_pos=len(text))],
+            title=fallback_title, header="",
+            sections=[RawSection(name="Full Document", idx=0, content=content,
+                                 start_pos=s_start, end_pos=s_end)],
         )
 
     title = headings[0][2]
@@ -77,11 +86,11 @@ def recover_structure(text: str, *, fallback_title: str) -> StructuredDoc:
     title_line_end = _line_end_after(text, headings[0][0])
 
     if not rest:
+        content, s_start, s_end = _slice_offsets(text, title_line_end, len(text))
         return StructuredDoc(
             title=title, header="",
-            sections=[RawSection(name=title, idx=0,
-                                 content=text[title_line_end:].strip(),
-                                 start_pos=title_line_end, end_pos=len(text))],
+            sections=[RawSection(name=title, idx=0, content=content,
+                                 start_pos=s_start, end_pos=s_end)],
         )
 
     sec_level = min(lvl for _, lvl, _ in rest)
@@ -93,9 +102,9 @@ def recover_structure(text: str, *, fallback_title: str) -> StructuredDoc:
     for i, (pos, name) in enumerate(sec_heads):
         end = sec_heads[i + 1][0] if i + 1 < len(sec_heads) else len(text)
         content_start = _line_end_after(text, pos)
-        sections.append(RawSection(name=name, idx=i,
-                                   content=text[content_start:end].strip(),
-                                   start_pos=pos, end_pos=end))
+        content, s_start, s_end = _slice_offsets(text, content_start, end)
+        sections.append(RawSection(name=name, idx=i, content=content,
+                                   start_pos=s_start, end_pos=s_end))
     return StructuredDoc(title=title, header=header, sections=sections)
 
 

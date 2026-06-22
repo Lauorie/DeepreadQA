@@ -23,4 +23,4 @@ def count_tokens(text: str) -> int:
             return len(_ENC.encode(text))
         except Exception:
             logger.debug("tiktoken encode failed; using char/4 fallback")
-    return len(text) // 4
+    return max(1, len(text) // 4)

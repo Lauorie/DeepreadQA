@@ -29,7 +29,8 @@ def process_one(text: str, doc_id: str, enricher: Enricher, *,
     sdoc = recover_structure(text, fallback_title=Path(doc_id).stem)
     lang = detect_language(text)
     gtldr, keywords, sec_tldrs = enricher.enrich_document(sdoc.title, sdoc, lang)
-    sections = [SectionRecord(idx=s.idx, name=s.name, tldr=sec_tldrs[i],
+    sections = [SectionRecord(idx=s.idx, name=s.name,
+                              tldr=sec_tldrs[i] if i < len(sec_tldrs) else "",
                               token_count=count_tokens(s.content),
                               start_pos=s.start_pos, end_pos=s.end_pos,
                               content=s.content)

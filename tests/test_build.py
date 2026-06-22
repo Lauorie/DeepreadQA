@@ -71,3 +71,15 @@ def test_build_store_isolates_unreadable_file(tmp_path):
     stats = build_store(corpus, db, enr, max_workers=2)
     assert stats["failed"] == 1
     assert stats["processed"] == 1
+
+
+class _ShortEnricher:
+    def enrich_document(self, title, doc, language):
+        return "g", ["k"], []  # returns zero section tldrs regardless
+
+
+def test_process_one_tolerates_short_section_tldrs():
+    text = (FIX / "en_paper.md").read_text(encoding="utf-8")
+    rec = process_one(text, "en_paper.md", _ShortEnricher())
+    assert len(rec.sections) == 3
+    assert all(s.tldr == "" for s in rec.sections)

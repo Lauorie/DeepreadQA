@@ -79,3 +79,11 @@ def test_mismatched_fence_marker_stays_closed():
     names = [s.name for s in doc.sections]
     assert names == ["Real", "Second"]
     assert "not heading" in doc.sections[0].content
+
+
+def test_section_offsets_roundtrip():
+    for fname in ["en_paper.md", "zh_paper.md", "nested.md", "no_heading.md"]:
+        text = _read(fname)
+        doc = recover_structure(text, fallback_title="x")
+        for s in doc.sections:
+            assert text[s.start_pos:s.end_pos] == s.content

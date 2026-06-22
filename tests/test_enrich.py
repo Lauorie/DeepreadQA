@@ -124,3 +124,15 @@ def test_parse_global_response_truncated_keywords_string():
     tldr, kws = parse_global_response(raw)
     assert tldr == "foo"
     assert kws == ["CAE", "finite element", "fatigue"]
+
+
+def test_parse_global_response_unparseable_braces_not_blob():
+    tldr, kws = parse_global_response("{not valid json at all}")
+    assert tldr == ""
+    assert kws == []
+
+
+def test_parse_global_response_plain_prose_passthrough():
+    tldr, kws = parse_global_response("This paper proposes a new FSI coupling scheme.")
+    assert tldr == "This paper proposes a new FSI coupling scheme."
+    assert kws == []
