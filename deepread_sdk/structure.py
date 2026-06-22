@@ -7,11 +7,12 @@ from .schema import RawSection, StructuredDoc
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _CJK_RE = re.compile(r"[一-鿿]")
-_ABSTRACT_RE = re.compile(r"^(abstract|abstract\.|摘\s*要)$", re.IGNORECASE)
+_ABSTRACT_RE = re.compile(r"^(abstract|摘\s*要)\s*[.:：]?\s*$", re.IGNORECASE)
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
 
 def detect_language(text: str) -> str:
-    """Heuristic: 'zh' if CJK characters exceed 5% of alpha chars, else 'en'."""
+    """Heuristic: 'zh' if CJK characters exceed 30% of alpha chars, else 'en'."""
     cjk = len(_CJK_RE.findall(text))
     latin = len(re.findall(r"[A-Za-z]", text))
     total = cjk + latin
@@ -21,13 +22,21 @@ def detect_language(text: str) -> str:
 
 
 def _find_headings(text: str) -> list[tuple[int, int, str]]:
-    """Return (char_pos, level, name) for every ATX heading line."""
+    """Return (char_pos, level, name) for every ATX heading line, skipping
+    headings inside fenced code blocks."""
     out: list[tuple[int, int, str]] = []
     pos = 0
+    in_fence = False
     for line in text.splitlines(keepends=True):
-        m = _HEADING_RE.match(line.rstrip("\n"))
-        if m and m.group(2).strip():
-            out.append((pos, len(m.group(1)), m.group(2).strip()))
+        stripped = line.rstrip("\n")
+        if _FENCE_RE.match(stripped):
+            in_fence = not in_fence
+            pos += len(line)
+            continue
+        if not in_fence:
+            m = _HEADING_RE.match(stripped)
+            if m and m.group(2).strip():
+                out.append((pos, len(m.group(1)), m.group(2).strip()))
         pos += len(line)
     return out
 
@@ -85,8 +94,13 @@ def recover_structure(text: str, *, fallback_title: str) -> StructuredDoc:
 
 
 def extract_abstract(doc: StructuredDoc) -> str | None:
-    """Return abstract content if a section is named Abstract/摘要, else None."""
+    """Return abstract content from a section named Abstract/摘要 (tolerating a
+    trailing . or :), else from an inline abstract line in the header, else None."""
     for s in doc.sections:
         if _ABSTRACT_RE.match(s.name.strip()):
             return s.content
+    for line in doc.header.splitlines():
+        m = re.match(r"^(abstract|摘\s*要)\s*[:：.]?\s*(.+)$", line.strip(), re.IGNORECASE)
+        if m and m.group(2).strip():
+            return m.group(2).strip()
     return None

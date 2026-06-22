@@ -51,3 +51,23 @@ def test_extract_abstract_from_named_section():
 def test_detect_language():
     assert detect_language("这是一段中文文本，关于流固耦合。") == "zh"
     assert detect_language("This is English about FSI.") == "en"
+
+
+def test_heading_inside_code_fence_ignored():
+    text = "# Title\n## Real Section\n```\n## not a heading\ncode\n```\nmore text\n## Second\nx"
+    doc = recover_structure(text, fallback_title="x")
+    names = [s.name for s in doc.sections]
+    assert names == ["Real Section", "Second"]
+    assert "not a heading" in doc.sections[0].content
+
+
+def test_extract_abstract_trailing_colon():
+    text = "# T\nhdr\n## Abstract:\nbody text here\n## 1. Intro\ni"
+    doc = recover_structure(text, fallback_title="x")
+    assert extract_abstract(doc) == "body text here"
+
+
+def test_extract_abstract_from_header_inline_zh():
+    doc = recover_structure(_read("zh_paper.md"), fallback_title="x")
+    abs_text = extract_abstract(doc)
+    assert abs_text is not None and "创新对家族企业" in abs_text
