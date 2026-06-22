@@ -59,10 +59,22 @@ def test_list_docs(populated_store):
     r = Reader(populated_store)
     docs = r.list_docs()
     assert len(docs) == 4
-    assert all("doc_id" in d and "tldr" in d for d in docs)
+    for d in docs:
+        assert {"doc_id", "title", "tldr", "keywords", "abstract",
+                "language", "sections"} <= d.keys()
+        for s in d["sections"]:
+            assert {"name", "idx", "tldr", "token_count", "content"} <= s.keys()
 
 
 def test_unknown_doc_raises(populated_store):
     r = Reader(populated_store)
     with pytest.raises(KeyError):
         r.brief("nope.md")
+
+
+def test_preview_honors_preview_chars(populated_store):
+    r = Reader(populated_store, preview_chars=50)
+    p = r.preview("en_paper.md")
+    assert p["preview_characters"] == 50
+    assert p["is_truncated"] is True
+    assert len(p["preview"]) == 50

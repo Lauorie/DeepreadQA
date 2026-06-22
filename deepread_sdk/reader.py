@@ -46,10 +46,12 @@ class Reader:
 
     def preview(self, doc_id: str) -> dict:
         r = self._get(doc_id)
-        return {"doc_id": r.doc_id, "preview": r.preview,
-                "is_truncated": r.preview_is_truncated,
-                "total_characters": r.total_characters,
-                "preview_characters": len(r.preview)}
+        text = r.raw_md
+        prev = text[: self._preview_chars]
+        return {"doc_id": r.doc_id, "preview": prev,
+                "is_truncated": len(text) > self._preview_chars,
+                "total_characters": len(text),
+                "preview_characters": len(prev)}
 
     def section(self, doc_id: str, name: str | None = None,
                 idx: int | None = None) -> dict:
@@ -85,5 +87,6 @@ class Reader:
                         "keywords": r.keywords, "abstract": r.abstract,
                         "language": r.language,
                         "sections": [{"name": s.name, "idx": s.idx, "tldr": s.tldr,
-                                      "content": s.content} for s in r.sections]})
+                                      "token_count": s.token_count, "content": s.content}
+                                     for s in r.sections]})
         return out
