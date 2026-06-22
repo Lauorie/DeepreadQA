@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def _hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def process_one(text: str, doc_id: str, enricher: Enricher, *,

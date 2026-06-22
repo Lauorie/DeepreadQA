@@ -148,3 +148,28 @@ def test_parse_global_response_prose_with_citation_brackets_kept():
     tldr, kws = parse_global_response("MemoRAG [1] improves long-context RAG.")
     assert tldr == "MemoRAG [1] improves long-context RAG."
     assert kws == []
+
+
+def test_parse_global_response_nested_json_tldr_sanitized():
+    raw = '{"tldr": "{\\"foo\\": \\"bar\\"}", "keywords": ["k"]}'
+    tldr, kws = parse_global_response(raw)
+    assert tldr == ""
+    assert kws == ["k"]
+
+
+class _StructuredSectionClient:
+    def complete(self, system, user):
+        if "STRICT JSON" in system:
+            return '{"tldr": "global ok", "keywords": ["k"]}'
+        return '```json\n{"summary": "x"}\n```'
+
+
+def test_enrich_document_rejects_structured_section_tldr():
+    enr = Enricher(_StructuredSectionClient())
+    doc = StructuredDoc(title="T", header="", sections=[
+        RawSection(name="S1", idx=0, content="real content about FSI",
+                   start_pos=0, end_pos=1)])
+    g, kws, secs = enr.enrich_document("T", doc, "en")
+    assert g == "global ok"
+    assert secs[0] and "```" not in secs[0] and not secs[0].lstrip().startswith("{")
+    assert "FSI" in secs[0]

@@ -43,6 +43,18 @@ def _coerce_keywords(kws_raw) -> list[str]:
     return []
 
 
+def _value_looks_structured(s: str) -> bool:
+    """True if a TL;DR *value* looks like JSON/fenced/structured output."""
+    st = s.lstrip()
+    return st[:1] in "{[" or "```" in s or '"tldr"' in s or '"keywords"' in s
+
+
+def _sanitize_tldr(s: str) -> str:
+    """Return a clean prose TL;DR, or '' if the value is empty/structured."""
+    s = (s or "").strip()
+    return "" if (not s or _value_looks_structured(s)) else s
+
+
 def parse_global_response(raw: str) -> tuple[str, list[str]]:
     """Parse {tldr, keywords} from an LLM response defensively.
 
@@ -64,12 +76,12 @@ def parse_global_response(raw: str) -> tuple[str, list[str]]:
             continue
         if isinstance(obj, dict):
             tldr_val = obj.get("tldr", "")
-            tldr = tldr_val.strip() if isinstance(tldr_val, str) else ""
+            tldr = _sanitize_tldr(tldr_val) if isinstance(tldr_val, str) else ""
             return tldr, _coerce_keywords(obj.get("keywords", []))
     # lenient extraction from malformed / truncated JSON-ish text
     tm = _TLDR_RE.search(cleaned)
     km = _KW_LIST_RE.search(cleaned)
-    tldr = tm.group(1).replace('\\"', '"').replace("\\n", " ").strip() if tm else ""
+    tldr = _sanitize_tldr(tm.group(1).replace('\\"', '"').replace("\\n", " ")) if tm else ""
     kws: list[str] = []
     if km:
         kws = [k.strip().strip('"').strip() for k in km.group(1).split(",")
@@ -126,6 +138,6 @@ class Enricher:
         section_tldrs: list[str] = []
         for s in doc.sections:
             body = _truncate_to_tokens(f"{s.name}\n{s.content}", self._sbudget)
-            out = self._safe_complete(ssys, body).strip()
+            out = _sanitize_tldr(self._safe_complete(ssys, body))
             section_tldrs.append(out if out else _fallback_tldr(s.content))
         return gtldr, keywords, section_tldrs

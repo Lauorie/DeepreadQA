@@ -83,3 +83,11 @@ def test_process_one_tolerates_short_section_tldrs():
     rec = process_one(text, "en_paper.md", _ShortEnricher())
     assert len(rec.sections) == 3
     assert all(s.tldr == "" for s in rec.sections)
+
+
+def test_hash_is_full_sha256():
+    import hashlib
+    from deepread_sdk.build import _hash
+    text = "hello world"
+    assert _hash(text) == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert len(_hash(text)) == 64
