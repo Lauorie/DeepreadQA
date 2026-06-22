@@ -43,7 +43,7 @@ class ToolLLM:
             kwargs: dict[str, Any] = {
                 "model": self._ep.model,
                 "messages": messages,
-                "max_tokens": max_tokens or 2000,
+                "max_tokens": max_tokens if max_tokens is not None else 2000,
             }
             if tools:
                 kwargs["tools"] = tools
@@ -66,7 +66,10 @@ class ToolLLM:
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 text = str(exc).lower()
-                if "temperature" in text and not self._omit_temp:
+                if ("temperature" in text
+                        and ("unsupported" in text or "not support" in text
+                             or "deprecat" in text)
+                        and not self._omit_temp):
                     self._omit_temp = True
                     logger.warning("disabling temperature for %s", self._ep.name)
                     continue
