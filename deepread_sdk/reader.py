@@ -75,8 +75,11 @@ class Reader:
 
     def json(self, doc_id: str) -> dict:
         r = self._get(doc_id)
-        data = {s.name: {"content": s.content, "start_pos": s.start_pos,
-                         "end_pos": s.end_pos} for s in r.sections}
+        data: dict = {}
+        for s in r.sections:
+            key = s.name if s.name not in data else f"{s.name} (idx {s.idx})"
+            data[key] = {"content": s.content, "start_pos": s.start_pos,
+                         "end_pos": s.end_pos}
         return {"doc_id": r.doc_id, "data": data}
 
     def list_docs(self) -> list[dict]:

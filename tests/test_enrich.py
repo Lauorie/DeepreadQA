@@ -97,3 +97,30 @@ def test_parse_global_response_fenced_with_trailing_prose():
     tldr, kws = parse_global_response(raw)
     assert tldr == "T"
     assert kws == ["k"]
+
+
+class _RaisingClient:
+    def complete(self, system, user):
+        raise RuntimeError("network down")
+
+
+def test_enrich_document_survives_raising_client():
+    enr = Enricher(_RaisingClient())
+    doc = StructuredDoc(title="T", header="", sections=[
+        RawSection(name="S1", idx=0, content="content one", start_pos=0, end_pos=1)])
+    g, kws, secs = enr.enrich_document("T", doc, "en")
+    assert isinstance(g, str) and g
+    assert secs and all(s for s in secs)
+
+
+def test_parse_global_response_nonstring_tldr_yields_empty():
+    tldr, kws = parse_global_response('{"tldr": {"summary": "x"}, "keywords": ["k"]}')
+    assert tldr == ""
+    assert kws == ["k"]
+
+
+def test_parse_global_response_truncated_keywords_string():
+    raw = '{"tldr": "foo", "keywords": "CAE, finite element; fatigue"'
+    tldr, kws = parse_global_response(raw)
+    assert tldr == "foo"
+    assert kws == ["CAE", "finite element", "fatigue"]

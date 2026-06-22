@@ -52,3 +52,14 @@ def test_missing_doc_returns_none(tmp_path):
     conn = store.connect(tmp_path / "t.db")
     store.init_schema(conn)
     assert store.get_document(conn, "nope.md") is None
+
+
+def test_connect_read_only_path_with_space(tmp_path):
+    d = tmp_path / "with space"
+    d.mkdir()
+    db = d / "c.db"
+    conn = store.connect(db)
+    store.init_schema(conn)
+    conn.close()
+    ro = store.connect(db, read_only=True)
+    assert ro.execute("SELECT 1").fetchone()[0] == 1

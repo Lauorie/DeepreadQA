@@ -71,3 +71,11 @@ def test_extract_abstract_from_header_inline_zh():
     doc = recover_structure(_read("zh_paper.md"), fallback_title="x")
     abs_text = extract_abstract(doc)
     assert abs_text is not None and "创新对家族企业" in abs_text
+
+
+def test_mismatched_fence_marker_stays_closed():
+    text = "# T\n## Real\n```\n~~~ inner\n## not heading\n```\n## Second\nx"
+    doc = recover_structure(text, fallback_title="x")
+    names = [s.name for s in doc.sections]
+    assert names == ["Real", "Second"]
+    assert "not heading" in doc.sections[0].content

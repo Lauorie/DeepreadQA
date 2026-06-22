@@ -25,6 +25,7 @@ _FENCE_RE = re.compile(r"```[a-zA-Z0-9]*\n?|```")
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 _TLDR_RE = re.compile(r'"tldr"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
 _KW_LIST_RE = re.compile(r'"keywords"\s*:\s*\[([^\]]*)\]', re.DOTALL)
+_KW_STR_RE = re.compile(r'"keywords"\s*:\s*"([^"]*)"', re.DOTALL)
 
 
 def _truncate_to_tokens(text: str, budget: int) -> str:
@@ -62,7 +63,9 @@ def parse_global_response(raw: str) -> tuple[str, list[str]]:
         except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(obj, dict):
-            return str(obj.get("tldr", "")).strip(), _coerce_keywords(obj.get("keywords", []))
+            tldr_val = obj.get("tldr", "")
+            tldr = tldr_val.strip() if isinstance(tldr_val, str) else ""
+            return tldr, _coerce_keywords(obj.get("keywords", []))
     # malformed/truncated but JSON-looking: extract leniently, never dump the blob
     if "{" in raw and ('"tldr"' in raw or '"keywords"' in raw):
         tm = _TLDR_RE.search(cleaned)
@@ -72,6 +75,10 @@ def parse_global_response(raw: str) -> tuple[str, list[str]]:
         if km:
             kws = [k.strip().strip('"').strip() for k in km.group(1).split(",")
                    if k.strip().strip('"').strip()]
+        else:
+            sm = _KW_STR_RE.search(cleaned)
+            if sm:
+                kws = [k.strip() for k in re.split(r"[,;]", sm.group(1)) if k.strip()]
         return tldr, kws
     # genuine prose response: raw is a reasonable tldr
     return raw, []
@@ -93,6 +100,13 @@ class Enricher:
         self._gbudget = global_token_budget
         self._sbudget = section_token_budget
 
+    def _safe_complete(self, system: str, user: str) -> str:
+        try:
+            return self._client.complete(system, user)
+        except Exception:  # noqa: BLE001 - enrichment must never crash a document
+            logger.warning("enrichment client raised; using fallback")
+            return ""
+
     def enrich_document(self, title: str, doc: StructuredDoc,
                         language: str) -> tuple[str, list[str], list[str]]:
         lang_hint = f" The document language is '{language}'; write all summaries in that language."
@@ -101,7 +115,7 @@ class Enricher:
         head_text = title + "\n" + doc.header + "\n" + (
             doc.sections[0].content if doc.sections else "")
         head_text = _truncate_to_tokens(head_text, self._gbudget)
-        raw = self._client.complete(gsys, head_text)
+        raw = self._safe_complete(gsys, head_text)
         gtldr, keywords = parse_global_response(raw)
         if not gtldr:
             gtldr = _fallback_tldr(head_text)
@@ -109,6 +123,6 @@ class Enricher:
         section_tldrs: list[str] = []
         for s in doc.sections:
             body = _truncate_to_tokens(f"{s.name}\n{s.content}", self._sbudget)
-            out = self._client.complete(ssys, body).strip()
+            out = self._safe_complete(ssys, body).strip()
             section_tldrs.append(out if out else _fallback_tldr(s.content))
         return gtldr, keywords, section_tldrs

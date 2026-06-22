@@ -59,3 +59,15 @@ def test_build_store_isolates_single_doc_failure(tmp_path):
     assert stats["processed"] == 3
     conn = store.connect(db, read_only=True)
     assert len(store.list_doc_ids(conn)) == 3
+
+
+def test_build_store_isolates_unreadable_file(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "good.md").write_text("# Good\n## S\nbody", encoding="utf-8")
+    (corpus / "bad.md").mkdir()  # a directory named *.md -> read_text raises IsADirectoryError
+    db = tmp_path / "c.db"
+    enr = Enricher(_StubClient())
+    stats = build_store(corpus, db, enr, max_workers=2)
+    assert stats["failed"] == 1
+    assert stats["processed"] == 1

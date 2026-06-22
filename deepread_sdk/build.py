@@ -58,14 +58,20 @@ def build_store(kb_root, db_path, enricher: Enricher, *, max_workers: int = 8,
 
     todo: list[tuple[str, str]] = []
     skipped = 0
+    failed = 0
     for p in files:
-        text = p.read_text(encoding="utf-8", errors="ignore")
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            failed += 1
+            logger.error("failed reading %s: %s", p.name, exc)
+            continue
         if not force and store.get_content_hash(conn, p.name) == _hash(text):
             skipped += 1
             continue
         todo.append((p.name, text))
 
-    processed = failed = 0
+    processed = 0
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = {ex.submit(process_one, text, doc_id, enricher): doc_id
                 for doc_id, text in todo}

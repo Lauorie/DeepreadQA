@@ -78,3 +78,20 @@ def test_preview_honors_preview_chars(populated_store):
     assert p["preview_characters"] == 50
     assert p["is_truncated"] is True
     assert len(p["preview"]) == 50
+
+
+def test_json_disambiguates_duplicate_section_names(tmp_path):
+    from deepread_sdk import store
+    from deepread_sdk.schema import DocRecord, SectionRecord
+    db = tmp_path / "d.db"
+    conn = store.connect(db)
+    store.init_schema(conn)
+    store.write_document(conn, DocRecord(
+        doc_id="x.md", title="X", language="en", abstract=None, header="",
+        tldr="t", keywords=[], token_count=1, total_characters=1, preview="p",
+        preview_is_truncated=False, raw_md="# X", content_hash="h",
+        sections=[SectionRecord(0, "Refs", "", 1, 0, 1, "a"),
+                  SectionRecord(1, "Refs", "", 1, 1, 2, "b")]))
+    conn.close()
+    j = Reader(db).json("x.md")
+    assert len(j["data"]) == 2

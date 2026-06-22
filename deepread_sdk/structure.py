@@ -8,7 +8,7 @@ from .schema import RawSection, StructuredDoc
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _CJK_RE = re.compile(r"[一-鿿]")
 _ABSTRACT_RE = re.compile(r"^(abstract|摘\s*要)\s*[.:：]?\s*$", re.IGNORECASE)
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 def detect_language(text: str) -> str:
@@ -23,17 +23,23 @@ def detect_language(text: str) -> str:
 
 def _find_headings(text: str) -> list[tuple[int, int, str]]:
     """Return (char_pos, level, name) for every ATX heading line, skipping
-    headings inside fenced code blocks."""
+    headings inside fenced code blocks. A fence opened by ``` closes only on
+    ```, and ~~~ only on ~~~ (a mismatched marker inside a fence is content)."""
     out: list[tuple[int, int, str]] = []
     pos = 0
-    in_fence = False
+    fence: str | None = None  # the marker char of the open fence, or None
     for line in text.splitlines(keepends=True):
         stripped = line.rstrip("\n")
-        if _FENCE_RE.match(stripped):
-            in_fence = not in_fence
+        fm = _FENCE_RE.match(stripped)
+        if fm:
+            marker = fm.group(1)[0]
+            if fence is None:
+                fence = marker
+            elif fence == marker:
+                fence = None
             pos += len(line)
             continue
-        if not in_fence:
+        if fence is None:
             m = _HEADING_RE.match(stripped)
             if m and m.group(2).strip():
                 out.append((pos, len(m.group(1)), m.group(2).strip()))
