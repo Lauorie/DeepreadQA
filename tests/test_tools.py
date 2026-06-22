@@ -1,5 +1,3 @@
-import json
-
 from deepread_sdk import Reader
 from deepreadqa.config import Config, Endpoint
 from deepreadqa.retrieval import SearchIndex
@@ -57,4 +55,18 @@ def test_read_raw_capped(populated_store):
 def test_unknown_doc_is_graceful(populated_store):
     box = _box(populated_store)
     out = box.execute("head", {"doc_id": "missing.md"})
+    assert "not found" in out.lower() or "unknown" in out.lower()
+
+
+def test_read_raw_truncates_when_over_cap(populated_store):
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True), raw_token_cap=1)
+    reader = Reader(populated_store)
+    box = ToolBox(cfg, reader, SearchIndex(reader))
+    out = box.execute("read_raw", {"doc_id": "en_paper.md"})
+    assert "truncated" in out.lower()
+
+
+def test_grep_unknown_doc_graceful(populated_store):
+    box = _box(populated_store)
+    out = box.execute("grep", {"doc_id": "missing.md", "patterns": ["x"]})
     assert "not found" in out.lower() or "unknown" in out.lower()

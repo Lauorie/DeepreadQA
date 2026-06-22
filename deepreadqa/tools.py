@@ -147,6 +147,7 @@ class ToolBox:
         ctx = self._cfg.grep_ctx_lines
         out: list[str] = []
         budget = self._cfg.grep_token_cap
+        used = 0
         for pat in patterns:
             low = pat.lower()
             found = 0
@@ -155,10 +156,12 @@ class ToolBox:
                     lo, hi = max(0, i - ctx), min(len(lines), i + ctx + 1)
                     passage = "\n".join(lines[lo:hi])
                     block = f"[{doc_id} :: '{pat}' near line {i+1}]\n{passage}"
-                    if count_tokens("\n".join(out) + block) > budget:
+                    btok = count_tokens(block)
+                    if used + btok > budget:
                         out.append("...(grep truncated: token cap reached)")
                         return "\n\n".join(out)
                     out.append(block)
+                    used += btok
                     found += 1
                     if found >= self._cfg.grep_passages_per_pattern:
                         break
