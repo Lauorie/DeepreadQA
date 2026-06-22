@@ -81,6 +81,12 @@ def test_mismatched_fence_marker_stays_closed():
     assert "not heading" in doc.sections[0].content
 
 
+def test_heading_preserves_internal_trailing_hash():
+    doc = recover_structure("# Title\n## C#\nbody\n## Other ##\nx", fallback_title="z")
+    names = [s.name for s in doc.sections]
+    assert names == ["C#", "Other"]
+
+
 def test_section_offsets_roundtrip():
     for fname in ["en_paper.md", "zh_paper.md", "nested.md", "no_heading.md"]:
         text = _read(fname)

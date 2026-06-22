@@ -136,3 +136,15 @@ def test_parse_global_response_plain_prose_passthrough():
     tldr, kws = parse_global_response("This paper proposes a new FSI coupling scheme.")
     assert tldr == "This paper proposes a new FSI coupling scheme."
     assert kws == []
+
+
+def test_parse_global_response_prose_prefixed_open_brace_not_blob():
+    tldr, kws = parse_global_response('Here is the JSON: {"foo":')
+    assert tldr == ""
+    assert kws == []
+
+
+def test_parse_global_response_prose_with_citation_brackets_kept():
+    tldr, kws = parse_global_response("MemoRAG [1] improves long-context RAG.")
+    assert tldr == "MemoRAG [1] improves long-context RAG."
+    assert kws == []

@@ -5,7 +5,7 @@ import re
 
 from .schema import RawSection, StructuredDoc
 
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$")
 _CJK_RE = re.compile(r"[一-鿿]")
 _ABSTRACT_RE = re.compile(r"^(abstract|摘\s*要)\s*[.:：]?\s*$", re.IGNORECASE)
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")

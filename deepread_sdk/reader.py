@@ -61,9 +61,10 @@ class Reader:
             target = next((s for s in r.sections if s.idx == idx), None)
         if target is None and name is not None:
             low = name.strip().lower()
-            target = next((s for s in r.sections if s.name.strip().lower() == low), None)
-            if target is None:
-                target = next((s for s in r.sections if low in s.name.lower()), None)
+            if low:
+                target = next((s for s in r.sections if s.name.strip().lower() == low), None)
+                if target is None:
+                    target = next((s for s in r.sections if low in s.name.lower()), None)
         if target is None:
             raise KeyError(f"section not found in {doc_id!r}: name={name!r} idx={idx!r}")
         return {"doc_id": r.doc_id, "name": target.name, "idx": target.idx,

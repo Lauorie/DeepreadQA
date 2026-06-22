@@ -80,6 +80,12 @@ def test_preview_honors_preview_chars(populated_store):
     assert len(p["preview"]) == 50
 
 
+def test_section_empty_name_raises(populated_store):
+    r = Reader(populated_store)
+    with pytest.raises(KeyError):
+        r.section("en_paper.md", name="   ")
+
+
 def test_json_disambiguates_duplicate_section_names(tmp_path):
     from deepread_sdk import store
     from deepread_sdk.schema import DocRecord, SectionRecord

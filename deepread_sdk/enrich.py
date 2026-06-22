@@ -82,7 +82,7 @@ def parse_global_response(raw: str) -> tuple[str, list[str]]:
         return tldr, kws
     # nothing extracted: a structured/blob response must NOT become the tldr
     stripped = raw.lstrip()
-    looks_structured = (stripped[:1] in "{[") or ("```" in raw) or \
+    looks_structured = ("{" in raw) or (stripped[:1] == "[") or ("```" in raw) or \
         ('"tldr"' in raw) or ('"keywords"' in raw)
     return ("", []) if looks_structured else (raw, [])
 
