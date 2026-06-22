@@ -88,9 +88,11 @@ class SearchIndex:
             self._units.append(_Unit(d["doc_id"], None, None, ""))
             for s in d["sections"]:
                 for ch in _chunk(s["content"], chunk_chars, overlap):
-                    # index section name + tldr alongside each chunk so structural
-                    # cues help ranking, while the chunk keeps the match local
-                    corpus.append(tokenize_mixed(f"{s['name']} {s['tldr']} {ch}"))
+                    # index the raw chunk text only. Prepending section name/tldr
+                    # to every chunk injects the same metadata into hundreds of
+                    # chunks of a giant single-section doc, diluting BM25; the
+                    # doc-summary unit already carries title/tldr/keywords.
+                    corpus.append(tokenize_mixed(ch))
                     self._units.append(_Unit(d["doc_id"], s["name"], s["idx"], ch))
         self._bm25 = BM25Okapi(corpus) if corpus else None
 
