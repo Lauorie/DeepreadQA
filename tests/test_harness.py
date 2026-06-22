@@ -53,3 +53,35 @@ def test_loop_terminates_with_answer(populated_store):
     assert res.forced_final is False
     assert "en_paper.md" in res.seen_docs
     assert any(c["tool"] == "read_section" for c in res.tool_calls)
+
+
+class _RaisingLLM:
+    total_tokens = 0
+
+    def chat(self, *args, **kwargs):
+        from deepreadqa.llm import LLMError
+        raise LLMError("boom")
+
+
+def test_llmerror_forces_finish_with_iteration_count(populated_store):
+    reader = Reader(populated_store)
+    qa = DeepreadQA(_cfg(), llm=_RaisingLLM(), reader=reader, index=SearchIndex(reader))
+    res = qa.answer("Q")
+    assert res.forced_final is True
+    assert res.error is not None
+    assert res.iterations == 1
+
+
+def test_prune_preserves_original_user_question(populated_store):
+    reader = Reader(populated_store)
+    qa = DeepreadQA(_cfg(), llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
+    conv = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "问题：原始问题"},
+        {"role": "assistant", "content": "draft"},
+        {"role": "tool", "tool_call_id": "t1", "content": "evidence"},
+    ]
+    pruned = qa._prune(conv, "进度概要")
+    assert pruned[0]["role"] == "system"
+    assert any(m["role"] == "user" and "原始问题" in m["content"] for m in pruned)
+    assert "进度概要" in pruned[-1]["content"]

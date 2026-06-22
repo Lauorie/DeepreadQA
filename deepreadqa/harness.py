@@ -79,7 +79,7 @@ class DeepreadQA:
                                       tool_choice="auto",
                                       max_tokens=cfg.max_output_tokens)
             except LLMError as exc:
-                return self._finish(question, conversation, call_log, box, i,
+                return self._finish(question, conversation, call_log, box, i + 1,
                                     compactions, forced=True, error=str(exc))
 
             if not resp.tool_calls:
@@ -126,8 +126,11 @@ class DeepreadQA:
         return conversation, False
 
     def _prune(self, conversation: list[dict], summary: str) -> list[dict]:
-        """Keep system + original question, drop tool chatter, append summary."""
-        kept = [conversation[0], conversation[1]]
+        """Keep system + original user question, drop tool chatter, append summary."""
+        kept = [conversation[0]]
+        user = next((m for m in conversation if m.get("role") == "user"), None)
+        if user is not None:
+            kept.append(user)
         kept.append({"role": "assistant",
                      "content": f"进度小结（已压缩上下文）：{summary}"})
         return kept
