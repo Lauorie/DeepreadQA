@@ -1,4 +1,11 @@
-"""Deterministic structure recovery: split markdown into sections by headings."""
+"""Deterministic structure recovery: split markdown into sections by headings.
+
+Primary path: ATX (``#``) markdown headings. Fallback for heading-less documents
+(typically PDF-to-markdown dumps of textbooks/papers): detect plain-text numbered
+section headings such as ``1.4.7 Mixture theories``. Without this, such a document
+collapses into one giant section, which (a) breaks section-level reading and
+(b) is buried by BM25 length normalization in retrieval.
+"""
 from __future__ import annotations
 
 import re
@@ -9,6 +16,10 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$")
 _CJK_RE = re.compile(r"[一-鿿]")
 _ABSTRACT_RE = re.compile(r"^(abstract|摘\s*要)\s*[.:：]?\s*$", re.IGNORECASE)
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+_NUMBERED_RE = re.compile(r"^\s*(\d{1,2}(?:\.\d{1,2}){0,3})\.?\s+([A-Z][^\n]{2,70})$")
+_BAD_TITLE_START = ("the ", "a ", "this ", "we ", "in ", "for ", "it ", "these ",
+                    "where ", "river", "street")
+_MIN_NUMBERED = 5  # only treat a heading-less doc as numbered-structured above this
 
 
 def detect_language(text: str) -> str:
@@ -47,6 +58,33 @@ def _find_headings(text: str) -> list[tuple[int, int, str]]:
     return out
 
 
+def _find_numbered_headings(text: str) -> list[tuple[int, str]]:
+    """Detect plain-text numbered section headings ('1.4.7 Mixture theories') for
+    documents with no markdown headings. Returns (char_pos, 'number title')."""
+    out: list[tuple[int, str]] = []
+    pos = 0
+    fence: str | None = None
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        fm = _FENCE_RE.match(stripped)
+        if fm:
+            marker = fm.group(1)[0]
+            fence = marker if fence is None else (None if fence == marker else fence)
+            pos += len(line)
+            continue
+        if fence is None:
+            m = _NUMBERED_RE.match(stripped)
+            if m:
+                num, title = m.group(1), m.group(2).strip()
+                if (int(num.split(".")[0]) <= 50
+                        and len(title.split()) <= 10
+                        and not title.lower().startswith(_BAD_TITLE_START)
+                        and not (title.isupper() and len(title) > 40)):
+                    out.append((pos, f"{num} {title}"))
+        pos += len(line)
+    return out
+
+
 def _slice_offsets(text: str, lo: int, hi: int) -> tuple[str, int, int]:
     """Return (stripped_content, start, end) such that text[start:end] == stripped."""
     raw = text[lo:hi]
@@ -61,19 +99,38 @@ def _line_end_after(text: str, pos: int) -> int:
     return len(text) if nl < 0 else nl + 1
 
 
+def _build_sections(text: str, boundaries: list[tuple[int, str]]) -> list[RawSection]:
+    """Build sections from ordered heading boundaries [(char_pos, name), ...].
+
+    Each section's content excludes its own heading line and runs to the next
+    boundary; offsets round-trip (text[start_pos:end_pos] == content)."""
+    sections: list[RawSection] = []
+    for i, (pos, name) in enumerate(boundaries):
+        end = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
+        content_start = _line_end_after(text, pos)
+        content, s_start, s_end = _slice_offsets(text, content_start, end)
+        sections.append(RawSection(name=name, idx=i, content=content,
+                                   start_pos=s_start, end_pos=s_end))
+    return sections
+
+
 def recover_structure(text: str, *, fallback_title: str) -> StructuredDoc:
     """Split *text* into a title, a front-matter header block, and sections.
 
     Rules:
-    - No headings -> single 'Full Document' section, title = fallback_title.
-    - First heading = document title.
-    - Sectioning level = the minimum heading level among the *remaining* headings.
-    - A new section begins at each heading at the sectioning level; deeper
-      subsections are kept inside their parent section's content.
-    - Header block = text between the title line and the first section heading.
+    - ATX headings present: first heading = title; sectioning level = the minimum
+      level among the remaining headings; deeper subsections stay nested.
+    - No ATX headings but >=5 plain-text numbered headings: use those as sections
+      (title = fallback_title; header = text before the first numbered heading).
+    - Otherwise: a single 'Full Document' section, title = fallback_title.
     """
     headings = _find_headings(text)
     if not headings:
+        numbered = _find_numbered_headings(text)
+        if len(numbered) >= _MIN_NUMBERED:
+            header = text[:numbered[0][0]].strip()
+            return StructuredDoc(title=fallback_title, header=header,
+                                 sections=_build_sections(text, numbered))
         content, s_start, s_end = _slice_offsets(text, 0, len(text))
         return StructuredDoc(
             title=fallback_title, header="",
@@ -95,17 +152,9 @@ def recover_structure(text: str, *, fallback_title: str) -> StructuredDoc:
 
     sec_level = min(lvl for _, lvl, _ in rest)
     sec_heads = [(pos, name) for (pos, lvl, name) in rest if lvl == sec_level]
-
     header = text[title_line_end:sec_heads[0][0]].strip()
-
-    sections: list[RawSection] = []
-    for i, (pos, name) in enumerate(sec_heads):
-        end = sec_heads[i + 1][0] if i + 1 < len(sec_heads) else len(text)
-        content_start = _line_end_after(text, pos)
-        content, s_start, s_end = _slice_offsets(text, content_start, end)
-        sections.append(RawSection(name=name, idx=i, content=content,
-                                   start_pos=s_start, end_pos=s_end))
-    return StructuredDoc(title=title, header=header, sections=sections)
+    return StructuredDoc(title=title, header=header,
+                         sections=_build_sections(text, sec_heads))
 
 
 def extract_abstract(doc: StructuredDoc) -> str | None:

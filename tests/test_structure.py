@@ -93,3 +93,38 @@ def test_section_offsets_roundtrip():
         doc = recover_structure(text, fallback_title="x")
         for s in doc.sections:
             assert text[s.start_pos:s.end_pos] == s.content
+
+
+def test_numbered_section_fallback_splits_pdf_dump():
+    text = (
+        "ALE and FSI Numerical Simulation\nFront matter copyright ISTE Ltd.\n\n"
+        "1.1 Introduction\nintro body about ALE methods.\n\n"
+        "1.2 Governing equations\ngoverning equation body.\n\n"
+        "1.4.5 Stress rates\nThe Jaumann stress rate is an objective rate.\n\n"
+        "1.4.7 Mixture theories\nMixture theories handle multi-material cells.\n\n"
+        "1.4.7.1 Mean strain rate mixture theory\nmean strain rate conserves energy.\n\n"
+        "1.4.7.2 Mean stress mixture theory\nmean stress does not conserve energy.\n"
+    )
+    doc = recover_structure(text, fallback_title="benson")
+    names = [s.name for s in doc.sections]
+    assert "1.4.5 Stress rates" in names
+    assert "1.4.7 Mixture theories" in names
+    assert len(doc.sections) >= 6
+    for s in doc.sections:
+        assert text[s.start_pos:s.end_pos] == s.content
+    sr = next(s for s in doc.sections if s.name == "1.4.5 Stress rates")
+    assert "Jaumann" in sr.content
+
+
+def test_numbered_fallback_not_triggered_below_threshold():
+    text = "Plain prose discussing 1.5 times the load over 2.0 m spans. No headings at all."
+    doc = recover_structure(text, fallback_title="p")
+    assert len(doc.sections) == 1
+    assert doc.sections[0].name == "Full Document"
+
+
+def test_atx_doc_ignores_numbered_fallback():
+    text = "# Title\n1.2 Not A Section\nbody\n## Real Section\nx"
+    doc = recover_structure(text, fallback_title="z")
+    names = [s.name for s in doc.sections]
+    assert names == ["Real Section"]
