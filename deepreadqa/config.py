@@ -36,6 +36,7 @@ class Config:
     grep_ctx_lines: int = 8
     grep_token_cap: int = 9000
     raw_token_cap: int = 40000
+    section_token_cap: int = 6000
     # compose head
     concise_compose: bool = True
     compose_evidence_token_cap: int = 40000

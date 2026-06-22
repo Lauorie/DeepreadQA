@@ -70,3 +70,11 @@ def test_grep_unknown_doc_graceful(populated_store):
     box = _box(populated_store)
     out = box.execute("grep", {"doc_id": "missing.md", "patterns": ["x"]})
     assert "not found" in out.lower() or "unknown" in out.lower()
+
+
+def test_read_section_truncates_when_over_cap(populated_store):
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True), section_token_cap=1)
+    reader = Reader(populated_store)
+    box = ToolBox(cfg, reader, SearchIndex(reader))
+    out = box.execute("read_section", {"doc_id": "en_paper.md", "section": "2. Method"})
+    assert "truncated" in out.lower()

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from deepread_sdk import Reader
-from deepread_sdk.tokens import count_tokens
+from deepread_sdk.tokens import count_tokens, truncate_to_tokens
 
 from .config import Config
 from .retrieval import SearchIndex
@@ -124,12 +124,20 @@ class ToolBox:
         s = self._reader.section(args["doc_id"], name=args.get("section"),
                                  idx=args.get("idx"))
         self.seen_docs.add(args["doc_id"])
+        content = s["content"]
+        if count_tokens(content) > self._cfg.section_token_cap:
+            content = (truncate_to_tokens(content, self._cfg.section_token_cap)
+                       + "\n...(section truncated at token cap; use grep for specifics)")
         return (f"SECTION {args['doc_id']} :: {s['name']} ({s['token_count']} tok)\n"
-                f"tldr: {s['tldr']}\n---\n{s['content']}")
+                f"tldr: {s['tldr']}\n---\n{content}")
 
     def _t_intro(self, args: dict) -> str:
         self.seen_docs.add(args["doc_id"])
-        return f"INTRO {args['doc_id']}\n---\n{self._reader.intro(args['doc_id'])}"
+        content = self._reader.intro(args["doc_id"])
+        if count_tokens(content) > self._cfg.section_token_cap:
+            content = (truncate_to_tokens(content, self._cfg.section_token_cap)
+                       + "\n...(intro truncated at token cap)")
+        return f"INTRO {args['doc_id']}\n---\n{content}"
 
     def _t_preview(self, args: dict) -> str:
         p = self._reader.preview(args["doc_id"])
@@ -174,8 +182,8 @@ class ToolBox:
         self.seen_docs.add(doc_id)
         raw = self._reader.raw(doc_id)
         if count_tokens(raw) > self._cfg.raw_token_cap:
-            cap_chars = self._cfg.raw_token_cap * 4
-            raw = raw[:cap_chars] + "\n...(raw truncated at token cap; use read_section/grep)"
+            raw = (truncate_to_tokens(raw, self._cfg.raw_token_cap)
+                   + "\n...(raw truncated at token cap; use read_section/grep)")
         return f"RAW {doc_id}\n---\n{raw}"
 
     def _t_summarize(self, args: dict) -> str:

@@ -85,3 +85,52 @@ def test_prune_preserves_original_user_question(populated_store):
     assert pruned[0]["role"] == "system"
     assert any(m["role"] == "user" and "原始问题" in m["content"] for m in pruned)
     assert "进度概要" in pruned[-1]["content"]
+
+
+def test_collect_evidence_prioritizes_latest_and_summary(populated_store):
+    reader = Reader(populated_store)
+    qa = DeepreadQA(_cfg(), llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
+    conv = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "问题：Q"},
+        {"role": "tool", "tool_call_id": "a", "content": "OLD broad search results"},
+        {"role": "assistant", "content": "进度小结（已压缩上下文）：earlier progress"},
+        {"role": "tool", "tool_call_id": "b", "content": "LATEST grep decisive evidence"},
+    ]
+    ev = qa._collect_evidence(conv)
+    assert "LATEST grep decisive evidence" in ev
+    assert "进度小结" in ev
+
+
+def test_collect_evidence_drops_oldest_when_over_budget(populated_store):
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=False, compose_evidence_token_cap=20)
+    qa = DeepreadQA(cfg, llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
+    conv = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "问题：Q"},
+        {"role": "tool", "tool_call_id": "a", "content": "OLD " * 50},
+        {"role": "tool", "tool_call_id": "b", "content": "LATEST decisive evidence here"},
+    ]
+    ev = qa._collect_evidence(conv)
+    assert "LATEST decisive evidence here" in ev
+    assert "OLD" not in ev
+
+
+def test_local_prune_clean_and_bounded(populated_store):
+    reader = Reader(populated_store)
+    qa = DeepreadQA(_cfg(), llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
+    conv = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "问题：原始问题"},
+        {"role": "assistant", "content": "a",
+         "tool_calls": [{"id": "x", "type": "function",
+                         "function": {"name": "grep", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "x", "content": "evidence chunk"},
+    ]
+    pruned = qa._local_prune(conv)
+    assert all(m["role"] != "tool" for m in pruned)
+    assert pruned[0]["role"] == "system"
+    assert any(m["role"] == "user" and "原始问题" in m["content"] for m in pruned)
+    assert "evidence chunk" in pruned[-1]["content"]

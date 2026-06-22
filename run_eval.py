@@ -35,6 +35,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.shard is not None:
         if not args.num_shards or args.num_shards < 1:
             ap.error("--num-shards must be a positive integer when --shard is used")
+        if not (0 <= args.shard < args.num_shards):
+            ap.error("--shard must satisfy 0 <= shard < num_shards")
         cases = [c for c in cases if c["item_idx"] % args.num_shards == args.shard]
     if args.limit is not None:
         cases = cases[: args.limit]

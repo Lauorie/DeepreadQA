@@ -122,8 +122,8 @@ class DeepreadQA:
                 _, args = _parse_call(resp.tool_calls[0])
                 return self._prune(conversation, args.get("summary", "")), True
         except LLMError:
-            logger.warning("compression failed; continuing without prune")
-        return conversation, False
+            logger.warning("model compression failed; applying local prune")
+        return self._local_prune(conversation), True
 
     def _prune(self, conversation: list[dict], summary: str) -> list[dict]:
         """Keep system + original user question, drop tool chatter, append summary."""
@@ -133,6 +133,30 @@ class DeepreadQA:
             kept.append(user)
         kept.append({"role": "assistant",
                      "content": f"进度小结（已压缩上下文）：{summary}"})
+        return kept
+
+    def _local_prune(self, conversation: list[dict]) -> list[dict]:
+        """Deterministic fallback compaction: system + first user + a synthetic
+        summary holding the most recent tool evidence within half the threshold."""
+        system = conversation[0]
+        user = next((m for m in conversation if m.get("role") == "user"), None)
+        budget = self._cfg.token_threshold // 2
+        used = 0
+        tail: list[str] = []
+        for m in reversed(conversation):
+            if m.get("role") != "tool":
+                continue
+            t = count_messages_tokens([m])
+            if used + t > budget:
+                break
+            tail.append(str(m.get("content", "")))
+            used += t
+        tail.reverse()
+        kept = [system]
+        if user is not None:
+            kept.append(user)
+        kept.append({"role": "assistant",
+                     "content": "进度小结（本地压缩，保留近期证据）：\n" + "\n\n".join(tail)})
         return kept
 
     def _finalize(self, question: str, conversation: list[dict], draft: str) -> str:
@@ -152,17 +176,22 @@ class DeepreadQA:
             return draft
 
     def _collect_evidence(self, conversation: list[dict]) -> str:
-        chunks: list[str] = []
         budget = self._cfg.compose_evidence_token_cap
         used = 0
-        for m in conversation:
-            if m.get("role") == "tool":
-                c = str(m.get("content", ""))
-                t = count_messages_tokens([m])
-                if used + t > budget:
-                    break
-                chunks.append(c)
-                used += t
+        chunks: list[str] = []
+        for m in reversed(conversation):
+            role = m.get("role")
+            content = str(m.get("content", ""))
+            is_evidence = role == "tool" or (
+                role == "assistant" and content.startswith("进度小结"))
+            if not is_evidence:
+                continue
+            t = count_messages_tokens([m])
+            if used + t > budget:
+                break
+            chunks.append(content)
+            used += t
+        chunks.reverse()
         return "\n\n".join(chunks)
 
     def _finish(self, question, conversation, call_log, box, iters, compactions, *,
