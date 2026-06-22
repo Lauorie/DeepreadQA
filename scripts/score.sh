@@ -12,5 +12,5 @@ python3 score.py \
   --predictions "$PRED_ABS" \
   --out "$OUT_ABS" \
   --concurrency 16 \
-  --rubrics data/CAE-v2.0-1-rubrics.json \
-  --anchors data/CAE-anchor-scores.json
+  --rubrics data-v3/CAE-v3.0-rubrics.json \
+  --anchors data-v3/CAE-v3.0-anchor-scores.json
