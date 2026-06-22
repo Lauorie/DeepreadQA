@@ -32,9 +32,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.ids:
         want = {int(x) for x in args.ids.split(",")}
         cases = [c for c in cases if c["item_idx"] in want]
-    if args.shard is not None and args.num_shards:
+    if args.shard is not None:
+        if not args.num_shards or args.num_shards < 1:
+            ap.error("--num-shards must be a positive integer when --shard is used")
         cases = [c for c in cases if c["item_idx"] % args.num_shards == args.shard]
-    if args.limit:
+    if args.limit is not None:
         cases = cases[: args.limit]
 
     qa = DeepreadQA(cfg)
@@ -49,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:
                 res = qa.answer(c["question"])
                 answer = res.answer
             except Exception as exc:  # noqa: BLE001 - one bad item must not abort run
-                logger.error("item %s crashed: %s", idx, exc)
+                logger.error("item %s crashed: %s", idx, exc, exc_info=True)
                 res = None
                 answer = ""
             sf.write(json.dumps({"item_idx": idx, "answer": answer},
