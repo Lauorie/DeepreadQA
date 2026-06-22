@@ -51,7 +51,7 @@ def parse_global_response(raw: str) -> tuple[str, list[str]]:
                 kws = [str(k).strip() for k in kws_raw if str(k).strip()]
             else:
                 kws = []
-            return (tldr or raw), kws
+            return tldr, kws
     except (json.JSONDecodeError, ValueError):
         pass
     return raw, []
@@ -75,10 +75,13 @@ class Enricher:
 
     def enrich_document(self, title: str, doc: StructuredDoc,
                         language: str) -> tuple[str, list[str], list[str]]:
+        lang_hint = f" The document language is '{language}'; write all summaries in that language."
+        gsys = _GLOBAL_SYS + lang_hint
+        ssys = _SECTION_SYS + lang_hint
         head_text = title + "\n" + doc.header + "\n" + (
             doc.sections[0].content if doc.sections else "")
         head_text = _truncate_to_tokens(head_text, self._gbudget)
-        raw = self._client.complete(_GLOBAL_SYS, head_text)
+        raw = self._client.complete(gsys, head_text)
         gtldr, keywords = parse_global_response(raw)
         if not gtldr:
             gtldr = _fallback_tldr(head_text)
@@ -86,6 +89,6 @@ class Enricher:
         section_tldrs: list[str] = []
         for s in doc.sections:
             body = _truncate_to_tokens(f"{s.name}\n{s.content}", self._sbudget)
-            out = self._client.complete(_SECTION_SYS, body).strip()
+            out = self._client.complete(ssys, body).strip()
             section_tldrs.append(out if out else _fallback_tldr(s.content))
         return gtldr, keywords, section_tldrs

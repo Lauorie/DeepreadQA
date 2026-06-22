@@ -31,6 +31,7 @@ class EnrichLLM:
             except Exception as exc:  # noqa: BLE001 - resilient enrichment
                 last_exc = exc
                 logger.warning("enrich LLM attempt %d failed: %s", attempt + 1, exc)
-                time.sleep(1.5 * (attempt + 1))
+                if attempt < self._max_retries:
+                    time.sleep(1.5 * (attempt + 1))
         logger.error("enrich LLM exhausted retries: %s", last_exc)
         return ""

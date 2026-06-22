@@ -62,3 +62,17 @@ def test_enrich_document_resilient_to_empty_llm():
     assert isinstance(g, str) and g
     assert len(secs) == 2
     assert all(isinstance(s, str) and s for s in secs)
+
+
+def test_parse_global_response_keywords_as_string():
+    tldr, kws = parse_global_response('{"tldr":"t","keywords":"a, b; c"}')
+    assert tldr == "t"
+    assert kws == ["a", "b", "c"]
+
+
+def test_enrich_document_empty_sections():
+    client = FakeClient(['{"tldr":"g","keywords":["k"]}'])
+    enr = Enricher(client)
+    g, kws, secs = enr.enrich_document(
+        "T", StructuredDoc(title="T", header="", sections=[]), "en")
+    assert g == "g" and kws == ["k"] and secs == []
