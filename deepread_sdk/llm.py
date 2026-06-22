@@ -26,7 +26,7 @@ class EnrichLLM:
             try:
                 # No temperature: aiberm rejects it for some models.
                 resp = self._client.chat.completions.create(
-                    model=self._model, messages=messages, max_tokens=400)
+                    model=self._model, messages=messages, max_tokens=768)
                 return (resp.choices[0].message.content or "").strip()
             except Exception as exc:  # noqa: BLE001 - resilient enrichment
                 last_exc = exc

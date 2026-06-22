@@ -76,3 +76,24 @@ def test_enrich_document_empty_sections():
     g, kws, secs = enr.enrich_document(
         "T", StructuredDoc(title="T", header="", sections=[]), "en")
     assert g == "g" and kws == ["k"] and secs == []
+
+
+def test_parse_global_response_truncated_json_no_raw_blob():
+    raw = '{"tldr": "Concise summary here", "keywords": ["a", "b"'
+    tldr, kws = parse_global_response(raw)
+    assert tldr == "Concise summary here"
+    assert "{" not in tldr
+
+
+def test_parse_global_response_trailing_comma():
+    raw = '{"tldr": "S", "keywords": ["a", "b",],}'
+    tldr, kws = parse_global_response(raw)
+    assert tldr == "S"
+    assert kws == ["a", "b"]
+
+
+def test_parse_global_response_fenced_with_trailing_prose():
+    raw = 'Here you go:\n```json\n{"tldr": "T", "keywords": ["k"]}\n```\nHope that helps!'
+    tldr, kws = parse_global_response(raw)
+    assert tldr == "T"
+    assert kws == ["k"]

@@ -21,7 +21,10 @@ _SECTION_SYS = (
     "You are a precise academic summarizer. In one sentence, summarize the given "
     "section. Return ONLY the sentence, no JSON, no prefix. Use the document's language."
 )
-_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+_FENCE_RE = re.compile(r"```[a-zA-Z0-9]*\n?|```")
+_JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+_TLDR_RE = re.compile(r'"tldr"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
+_KW_LIST_RE = re.compile(r'"keywords"\s*:\s*\[([^\]]*)\]', re.DOTALL)
 
 
 def _truncate_to_tokens(text: str, budget: int) -> str:
@@ -31,29 +34,46 @@ def _truncate_to_tokens(text: str, budget: int) -> str:
     return text[: budget * 4]
 
 
+def _coerce_keywords(kws_raw) -> list[str]:
+    if isinstance(kws_raw, str):
+        return [k.strip() for k in re.split(r"[,;]", kws_raw) if k.strip()]
+    if isinstance(kws_raw, list):
+        return [str(k).strip() for k in kws_raw if str(k).strip()]
+    return []
+
+
 def parse_global_response(raw: str) -> tuple[str, list[str]]:
-    """Parse {tldr, keywords} defensively. Fall back to (raw, [])."""
+    """Parse {tldr, keywords} from an LLM response defensively.
+
+    Order: strict JSON -> trailing-comma repair -> lenient regex extraction
+    for malformed/truncated JSON. A JSON-looking blob is NEVER returned as the
+    tldr (we leave tldr empty so the caller's content fallback applies). Only a
+    genuine prose response (no JSON markers) is returned verbatim as the tldr.
+    """
     raw = (raw or "").strip()
     if not raw:
         return "", []
-    candidate = raw
-    m = _JSON_RE.search(raw)
-    if m:
-        candidate = m.group(0)
-    try:
-        obj = json.loads(candidate)
+    cleaned = _FENCE_RE.sub("", raw).strip()
+    m = _JSON_OBJ_RE.search(cleaned)
+    candidate = m.group(0) if m else cleaned
+    for attempt in (candidate, candidate.replace(",}", "}").replace(",]", "]")):
+        try:
+            obj = json.loads(attempt)
+        except (json.JSONDecodeError, ValueError):
+            continue
         if isinstance(obj, dict):
-            tldr = str(obj.get("tldr", "")).strip()
-            kws_raw = obj.get("keywords", [])
-            if isinstance(kws_raw, str):
-                kws = [k.strip() for k in re.split(r"[,;]", kws_raw) if k.strip()]
-            elif isinstance(kws_raw, list):
-                kws = [str(k).strip() for k in kws_raw if str(k).strip()]
-            else:
-                kws = []
-            return tldr, kws
-    except (json.JSONDecodeError, ValueError):
-        pass
+            return str(obj.get("tldr", "")).strip(), _coerce_keywords(obj.get("keywords", []))
+    # malformed/truncated but JSON-looking: extract leniently, never dump the blob
+    if "{" in raw and ('"tldr"' in raw or '"keywords"' in raw):
+        tm = _TLDR_RE.search(cleaned)
+        km = _KW_LIST_RE.search(cleaned)
+        tldr = tm.group(1).replace('\\"', '"').replace("\\n", " ").strip() if tm else ""
+        kws = []
+        if km:
+            kws = [k.strip().strip('"').strip() for k in km.group(1).split(",")
+                   if k.strip().strip('"').strip()]
+        return tldr, kws
+    # genuine prose response: raw is a reasonable tldr
     return raw, []
 
 
