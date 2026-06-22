@@ -1,0 +1,91 @@
+"""LLM-based light enrichment: global/section TL;DR and keywords."""
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+from .schema import StructuredDoc
+from .tokens import count_tokens
+
+logger = logging.getLogger(__name__)
+
+_GLOBAL_SYS = (
+    "You are a precise academic summarizer. Read the provided paper head and "
+    "return STRICT JSON only, no prose, with exactly these keys: "
+    '{"tldr": "<one or two sentence global summary>", '
+    '"keywords": ["<5 short technical keywords>"]}. '
+    "Write the tldr in the same language as the document."
+)
+_SECTION_SYS = (
+    "You are a precise academic summarizer. In one sentence, summarize the given "
+    "section. Return ONLY the sentence, no JSON, no prefix. Use the document's language."
+)
+_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _truncate_to_tokens(text: str, budget: int) -> str:
+    """Cheap char-based prefix that roughly respects a token budget."""
+    if count_tokens(text) <= budget:
+        return text
+    return text[: budget * 4]
+
+
+def parse_global_response(raw: str) -> tuple[str, list[str]]:
+    """Parse {tldr, keywords} defensively. Fall back to (raw, [])."""
+    raw = (raw or "").strip()
+    if not raw:
+        return "", []
+    candidate = raw
+    m = _JSON_RE.search(raw)
+    if m:
+        candidate = m.group(0)
+    try:
+        obj = json.loads(candidate)
+        if isinstance(obj, dict):
+            tldr = str(obj.get("tldr", "")).strip()
+            kws_raw = obj.get("keywords", [])
+            if isinstance(kws_raw, str):
+                kws = [k.strip() for k in re.split(r"[,;]", kws_raw) if k.strip()]
+            elif isinstance(kws_raw, list):
+                kws = [str(k).strip() for k in kws_raw if str(k).strip()]
+            else:
+                kws = []
+            return (tldr or raw), kws
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return raw, []
+
+
+def _fallback_tldr(text: str) -> str:
+    """First non-empty sentence/line of the content as a last-resort tldr."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith(("#", "|", "<")):
+            return line[:300]
+    return text.strip()[:300] or "(no content)"
+
+
+class Enricher:
+    def __init__(self, client, *, global_token_budget: int = 2048,
+                 section_token_budget: int = 1500) -> None:
+        self._client = client
+        self._gbudget = global_token_budget
+        self._sbudget = section_token_budget
+
+    def enrich_document(self, title: str, doc: StructuredDoc,
+                        language: str) -> tuple[str, list[str], list[str]]:
+        head_text = title + "\n" + doc.header + "\n" + (
+            doc.sections[0].content if doc.sections else "")
+        head_text = _truncate_to_tokens(head_text, self._gbudget)
+        raw = self._client.complete(_GLOBAL_SYS, head_text)
+        gtldr, keywords = parse_global_response(raw)
+        if not gtldr:
+            gtldr = _fallback_tldr(head_text)
+
+        section_tldrs: list[str] = []
+        for s in doc.sections:
+            body = _truncate_to_tokens(f"{s.name}\n{s.content}", self._sbudget)
+            out = self._client.complete(_SECTION_SYS, body).strip()
+            section_tldrs.append(out if out else _fallback_tldr(s.content))
+        return gtldr, keywords, section_tldrs
