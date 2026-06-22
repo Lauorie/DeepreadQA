@@ -105,8 +105,11 @@ class ToolBox:
         for h in hits:
             self.seen_docs.add(h.doc_id)
             hint = f" | best section: {h.section_name}" if h.section_name else ""
-            lines.append(f"- doc_id: {h.doc_id}\n  title: {h.title}\n  "
-                         f"tldr: {h.tldr}{hint}")
+            card = (f"- doc_id: {h.doc_id}\n  title: {h.title}\n  "
+                    f"tldr: {h.tldr}{hint}")
+            if getattr(h, "snippet", ""):
+                card += f"\n  matched snippet: {h.snippet}"
+            lines.append(card)
         return "\n".join(lines)
 
     def _t_head(self, args: dict) -> str:
