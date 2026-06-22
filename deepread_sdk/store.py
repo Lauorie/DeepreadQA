@@ -56,27 +56,27 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 
 def write_document(conn: sqlite3.Connection, rec: DocRecord) -> None:
-    conn.execute("DELETE FROM documents WHERE doc_id = ?", (rec.doc_id,))
-    conn.execute("DELETE FROM sections WHERE doc_id = ?", (rec.doc_id,))
-    conn.execute(
-        """INSERT INTO documents
-           (doc_id, title, language, abstract, header, tldr, keywords_json,
-            token_count, total_characters, preview, preview_is_truncated,
-            raw_md, content_hash)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (rec.doc_id, rec.title, rec.language, rec.abstract, rec.header, rec.tldr,
-         json.dumps(rec.keywords, ensure_ascii=False), rec.token_count,
-         rec.total_characters, rec.preview, int(rec.preview_is_truncated),
-         rec.raw_md, rec.content_hash),
-    )
-    conn.executemany(
-        """INSERT INTO sections
-           (doc_id, idx, name, tldr, token_count, start_pos, end_pos, content)
-           VALUES (?,?,?,?,?,?,?,?)""",
-        [(rec.doc_id, s.idx, s.name, s.tldr, s.token_count, s.start_pos,
-          s.end_pos, s.content) for s in rec.sections],
-    )
-    conn.commit()
+    with conn:
+        conn.execute("DELETE FROM documents WHERE doc_id = ?", (rec.doc_id,))
+        conn.execute("DELETE FROM sections WHERE doc_id = ?", (rec.doc_id,))
+        conn.execute(
+            """INSERT INTO documents
+               (doc_id, title, language, abstract, header, tldr, keywords_json,
+                token_count, total_characters, preview, preview_is_truncated,
+                raw_md, content_hash)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (rec.doc_id, rec.title, rec.language, rec.abstract, rec.header, rec.tldr,
+             json.dumps(rec.keywords, ensure_ascii=False), rec.token_count,
+             rec.total_characters, rec.preview, int(rec.preview_is_truncated),
+             rec.raw_md, rec.content_hash),
+        )
+        conn.executemany(
+            """INSERT INTO sections
+               (doc_id, idx, name, tldr, token_count, start_pos, end_pos, content)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            [(rec.doc_id, s.idx, s.name, s.tldr, s.token_count, s.start_pos,
+              s.end_pos, s.content) for s in rec.sections],
+        )
 
 
 def _row_to_sections(conn: sqlite3.Connection, doc_id: str) -> list[SectionRecord]:
