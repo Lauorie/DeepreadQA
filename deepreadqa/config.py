@@ -30,10 +30,10 @@ class Config:
     request_timeout_s: float = 180.0
     max_retries_per_endpoint: int = 2
     # retrieval / tools
-    max_queries_per_search: int = 5
-    results_per_query: int = 8
-    grep_passages_per_pattern: int = 2
-    grep_ctx_lines: int = 8
+    max_queries_per_search: int = 6
+    results_per_query: int = 20
+    grep_passages_per_pattern: int = 3
+    grep_ctx_lines: int = 12
     grep_token_cap: int = 9000
     raw_token_cap: int = 40000
     section_token_cap: int = 6000
