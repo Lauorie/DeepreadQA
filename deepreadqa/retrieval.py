@@ -12,6 +12,8 @@ from deepread_sdk import Reader
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _CJK_RE = re.compile(r"[一-鿿]")
 
+__all__ = ["tokenize_mixed", "SearchHit", "SearchIndex"]
+
 
 def tokenize_mixed(text: str) -> list[str]:
     """Tokenize text with regex latin/digit + jieba for CJK characters.
@@ -54,7 +56,6 @@ class SearchIndex:
     """BM25 index where each unit is a doc-summary or a section."""
 
     def __init__(self, reader: Reader) -> None:
-        self._reader = reader
         self._units: list[_Unit] = []
         self._meta: dict[str, tuple[str, str]] = {}  # doc_id -> (title, tldr)
         corpus: list[list[str]] = []

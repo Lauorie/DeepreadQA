@@ -28,7 +28,9 @@ def test_search_many_dedupes(populated_store):
     idx = SearchIndex(Reader(populated_store))
     hits = idx.search_many(["ALE coupling", "fluid structure interaction"], top_k=3)
     ids = [h.doc_id for h in hits]
-    assert len(ids) == len(set(ids))  # no duplicate docs
+    assert len(ids) == len(set(ids))
+    scores = [h.score for h in hits]
+    assert scores == sorted(scores, reverse=True)
 
 
 def test_search_chinese(populated_store):
