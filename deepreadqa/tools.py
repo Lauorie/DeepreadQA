@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from deepread_sdk import Reader
 from deepread_sdk.tokens import count_tokens, truncate_to_tokens
@@ -10,6 +11,11 @@ from .config import Config
 from .retrieval import SearchIndex
 
 logger = logging.getLogger(__name__)
+
+# front-matter / non-content section names to skip when read_section gets no target
+_FRONTMATTER_RE = re.compile(
+    r"library of congress|table of contents|cataloging|bibliograph|^references?$|"
+    r"acknowledg|声\s*明|摘\s*要|目\s*录|学位论文|致\s*谢|^abstract", re.IGNORECASE)
 
 TOOL_SCHEMAS: list[dict] = [
     {"type": "function", "function": {
@@ -128,7 +134,13 @@ class ToolBox:
         name = args.get("section")
         idx = args.get("idx")
         if name is None and idx is None:
-            idx = 0  # default to the first section when the model omits both
+            # no target given: read the first substantive section, skipping
+            # front matter (Library of Congress / 摘要 / Table of Contents …)
+            idx = 0
+            for sec in self._reader.head(args["doc_id"])["sections"]:
+                if sec["token_count"] > 0 and not _FRONTMATTER_RE.search(sec["name"]):
+                    idx = sec["idx"]
+                    break
         s = self._reader.section(args["doc_id"], name=name, idx=idx)
         self.seen_docs.add(args["doc_id"])
         content = s["content"]
