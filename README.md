@@ -70,14 +70,25 @@ the version `score.sh` now uses):
 
 | System | mean_anchored (v3) | note |
 |--------|--------------------|------|
-| **DeepreadQA (final)** | **0.795** | progressive reading; chunk-recall + numbered-section recovery |
+| **DeepreadQA (final)** | **0.78 – 0.80** | progressive reading; chunk-recall + size-aware section recovery |
 | agenticRAG baseline (concise) | 0.814 | full-text 1.1k-char chunk BM25 + large line-window reads |
 
-The gap is **0.019** — within the judge's per-run noise (the gpt-5.4-mini judge
-scores the *same* predictions in a ~0.04 band run-to-run). On v3 the two approaches
-are statistically neck-and-neck; DeepreadQA matches the baseline on factual_anchor
-(0.84 vs 0.84), comparative_balance (0.81 vs 0.81) and process_completeness (0.74
-tie), and trails only on numeric_precision (0.48 vs 0.70) and decision_logic.
+The gap is **within the judge's noise band**: the gpt-5.4-mini judge scores the
+*same* predictions in a ~0.04 aggregate band, and **individual items swing ±1.0**
+between runs of equivalent configs. Across four near-equivalent configs DeepreadQA
+lands at 0.779 / 0.790 / 0.792 / 0.795 — statistically indistinguishable from each
+other and neck-and-neck with the baseline. It matches the baseline on
+factual_anchor (~0.82), comparative_balance (~0.81) and mechanism_explanation, and
+trails only on numeric_precision (~0.45 vs 0.70) — a criterion whose 23 items are
+swamped by the 339-item factual_anchor group, so targeted numeric prompts lift it
+locally but leave the aggregate flat.
+
+**Structure was not the remaining bottleneck.** When the Benson source was later
+re-parsed with a proper #/##/### hierarchy (290 pages), size-aware recursive
+sectioning ingested it cleanly into 84 right-sized sections ("1.4.5 Stress rates"
+directly addressable) — yet the aggregate stayed at ~0.78 (within noise). By then
+the numbered-section fallback + chunk recall had already recovered Benson's content,
+so a cleaner source made the SDK more general without adding eval points.
 
 **Why the rubric version matters:** the older v2 rubric over-weighted `anti_hacking`
 pitfalls, which systematically penalized DeepreadQA's slightly longer answers. On v2
@@ -93,6 +104,7 @@ that mostly disappears under the calibrated v3 rubric.
 | v4 chunk-level BM25 | 0.743 | — | **root-cause fix**: chunk index so giant heading-less docs surface |
 | v5 raw-chunk index | 0.750 | 0.790 | drop per-chunk metadata noise |
 | **v6 numbered-section recovery** | 0.745 | **0.795** | **deepest fix**: split heading-less PDF dumps into real sections |
+| v8 re-parsed Benson + size-aware split | — | 0.779 | proper #/##/### source → 84 right-sized sections; flat vs v6 (noise) |
 
 **The root cause** (found by systematic debugging, not guessing): the gold document
 for **52 of 94 items** is a 128k-token ALE textbook (Benson) — a PDF→markdown dump
