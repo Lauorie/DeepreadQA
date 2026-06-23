@@ -128,3 +128,30 @@ def test_atx_doc_ignores_numbered_fallback():
     doc = recover_structure(text, fallback_title="z")
     names = [s.name for s in doc.sections]
     assert names == ["Real Section"]
+
+
+def test_deep_nesting_splits_oversized_chapter():
+    big = lambda s: (s + " ") * 4000  # filler far above the section-size cap
+    text = ("# Book Title\n"
+            "# Chapter 1\n"
+            "## 1.1 Intro\n" + big("intro") + "\n"
+            "## 1.4 Methods\n"
+            "### 1.4.5 Stress rates\n" + big("the jaumann stress rate is objective") + "\n"
+            "### 1.4.7 Mixture theories\n" + big("mixture average strain rate") + "\n")
+    doc = recover_structure(text, fallback_title="b")
+    names = [s.name for s in doc.sections]
+    assert any("1.4.5" in n for n in names), names[:8]
+    assert any("1.4.7" in n for n in names), names[:8]
+    sr = next(s for s in doc.sections if "1.4.5" in s.name)
+    assert "jaumann" in sr.content.lower()
+    for s in doc.sections:
+        assert text[s.start_pos:s.end_pos] == s.content
+
+
+def test_small_nested_doc_not_oversplit():
+    # small subsections stay nested (no recursion) — preserves prior behavior
+    text = "# T\n## Section One\n### Sub A\nshort body\n## Section Two\nx"
+    doc = recover_structure(text, fallback_title="z")
+    names = [s.name for s in doc.sections]
+    assert names == ["Section One", "Section Two"]
+    assert "Sub A" in doc.sections[0].content
