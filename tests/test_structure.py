@@ -155,3 +155,18 @@ def test_small_nested_doc_not_oversplit():
     names = [s.name for s in doc.sections]
     assert names == ["Section One", "Section Two"]
     assert "Sub A" in doc.sections[0].content
+
+
+def test_outlier_shallow_heading_does_not_orphan_sections():
+    # a trailing L1 heading (e.g. an English title) must not drag sectioning to
+    # L1 and orphan the real L2 sections into the header block
+    text = ("# 中文标题\n"
+            "## 1 材料模型\nbody about materials here\n"
+            "## 2 破坏模式\nbody about failure modes here\n"
+            "## 3 结论\nconclusion body here\n"
+            "# Trailing English Title\nenglish abstract tail\n")
+    doc = recover_structure(text, fallback_title="dam")
+    names = [s.name for s in doc.sections]
+    assert "1 材料模型" in names and "2 破坏模式" in names and "3 结论" in names, names
+    joined = " ".join(s.content for s in doc.sections)
+    assert "failure modes" in joined  # real content lives in a section, not lost

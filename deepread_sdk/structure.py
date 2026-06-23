@@ -184,6 +184,17 @@ def recover_structure(text: str, *, fallback_title: str) -> StructuredDoc:
                                  start_pos=s_start, end_pos=s_end)],
         )
 
+    # Section at the shallowest level that occurs >=2 times, so a single outlier
+    # shallow heading (e.g. a trailing English title or 'References' at '#') does
+    # not drag sectioning up and orphan the real sections into the header. Fall
+    # back to the minimum level when no level repeats.
+    lvl_counts: dict[int, int] = {}
+    for _, lvl, _ in rest:
+        lvl_counts[lvl] = lvl_counts.get(lvl, 0) + 1
+    repeated = [lvl for lvl in sorted(lvl_counts) if lvl_counts[lvl] >= 2]
+    sec_level = repeated[0] if repeated else min(lvl_counts)
+    rest = [h for h in rest if h[1] >= sec_level]  # drop shallower outliers
+
     first_pos = rest[0][0]
     header = text[title_line_end:first_pos].strip()
     raw_secs = _sectionize(text, rest, first_pos, len(text))
