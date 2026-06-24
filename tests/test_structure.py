@@ -93,3 +93,80 @@ def test_section_offsets_roundtrip():
         doc = recover_structure(text, fallback_title="x")
         for s in doc.sections:
             assert text[s.start_pos:s.end_pos] == s.content
+
+
+def test_numbered_section_fallback_splits_pdf_dump():
+    text = (
+        "ALE and FSI Numerical Simulation\nFront matter copyright ISTE Ltd.\n\n"
+        "1.1 Introduction\nintro body about ALE methods.\n\n"
+        "1.2 Governing equations\ngoverning equation body.\n\n"
+        "1.4.5 Stress rates\nThe Jaumann stress rate is an objective rate.\n\n"
+        "1.4.7 Mixture theories\nMixture theories handle multi-material cells.\n\n"
+        "1.4.7.1 Mean strain rate mixture theory\nmean strain rate conserves energy.\n\n"
+        "1.4.7.2 Mean stress mixture theory\nmean stress does not conserve energy.\n"
+    )
+    doc = recover_structure(text, fallback_title="benson")
+    names = [s.name for s in doc.sections]
+    assert "1.4.5 Stress rates" in names
+    assert "1.4.7 Mixture theories" in names
+    assert len(doc.sections) >= 6
+    for s in doc.sections:
+        assert text[s.start_pos:s.end_pos] == s.content
+    sr = next(s for s in doc.sections if s.name == "1.4.5 Stress rates")
+    assert "Jaumann" in sr.content
+
+
+def test_numbered_fallback_not_triggered_below_threshold():
+    text = "Plain prose discussing 1.5 times the load over 2.0 m spans. No headings at all."
+    doc = recover_structure(text, fallback_title="p")
+    assert len(doc.sections) == 1
+    assert doc.sections[0].name == "Full Document"
+
+
+def test_atx_doc_ignores_numbered_fallback():
+    text = "# Title\n1.2 Not A Section\nbody\n## Real Section\nx"
+    doc = recover_structure(text, fallback_title="z")
+    names = [s.name for s in doc.sections]
+    assert names == ["Real Section"]
+
+
+def test_deep_nesting_splits_oversized_chapter():
+    big = lambda s: (s + " ") * 4000  # filler far above the section-size cap
+    text = ("# Book Title\n"
+            "# Chapter 1\n"
+            "## 1.1 Intro\n" + big("intro") + "\n"
+            "## 1.4 Methods\n"
+            "### 1.4.5 Stress rates\n" + big("the jaumann stress rate is objective") + "\n"
+            "### 1.4.7 Mixture theories\n" + big("mixture average strain rate") + "\n")
+    doc = recover_structure(text, fallback_title="b")
+    names = [s.name for s in doc.sections]
+    assert any("1.4.5" in n for n in names), names[:8]
+    assert any("1.4.7" in n for n in names), names[:8]
+    sr = next(s for s in doc.sections if "1.4.5" in s.name)
+    assert "jaumann" in sr.content.lower()
+    for s in doc.sections:
+        assert text[s.start_pos:s.end_pos] == s.content
+
+
+def test_small_nested_doc_not_oversplit():
+    # small subsections stay nested (no recursion) — preserves prior behavior
+    text = "# T\n## Section One\n### Sub A\nshort body\n## Section Two\nx"
+    doc = recover_structure(text, fallback_title="z")
+    names = [s.name for s in doc.sections]
+    assert names == ["Section One", "Section Two"]
+    assert "Sub A" in doc.sections[0].content
+
+
+def test_outlier_shallow_heading_does_not_orphan_sections():
+    # a trailing L1 heading (e.g. an English title) must not drag sectioning to
+    # L1 and orphan the real L2 sections into the header block
+    text = ("# 中文标题\n"
+            "## 1 材料模型\nbody about materials here\n"
+            "## 2 破坏模式\nbody about failure modes here\n"
+            "## 3 结论\nconclusion body here\n"
+            "# Trailing English Title\nenglish abstract tail\n")
+    doc = recover_structure(text, fallback_title="dam")
+    names = [s.name for s in doc.sections]
+    assert "1 材料模型" in names and "2 破坏模式" in names and "3 结论" in names, names
+    joined = " ".join(s.content for s in doc.sections)
+    assert "failure modes" in joined  # real content lives in a section, not lost

@@ -1,4 +1,14 @@
-"""BM25 retrieval over enriched doc-level and section-level units."""
+"""BM25 retrieval over enriched doc summaries + section-content chunks.
+
+Section content is sub-split into overlapping character chunks before indexing.
+This is deliberate: heading-less / textbook PDF dumps land in the store as one
+giant single section (e.g. the 128k-token ALE/Benson volume that is the gold doc
+for ~55% of the eval). A whole-section BM25 unit for such a doc is crushed by
+length normalization, so rare-term queries (e.g. "Jaumann") never surface it.
+Fixed-size chunking — the same recall mechanism the agenticRAG baseline uses —
+keeps a buried passage's match local and high-scoring, independent of whether
+heading-based structure recovery succeeded.
+"""
 from __future__ import annotations
 
 import re
@@ -16,14 +26,7 @@ __all__ = ["tokenize_mixed", "SearchHit", "SearchIndex"]
 
 
 def tokenize_mixed(text: str) -> list[str]:
-    """Tokenize text with regex latin/digit + jieba for CJK characters.
-
-    Args:
-        text: Input text, may contain Latin, digits, and/or CJK characters.
-
-    Returns:
-        List of tokens (lowercased).
-    """
+    """Tokenize text with regex latin/digit + jieba for CJK characters."""
     low = text.lower()
     tokens = _TOKEN_RE.findall(low)
     if _CJK_RE.search(text):
@@ -31,9 +34,20 @@ def tokenize_mixed(text: str) -> list[str]:
     return tokens
 
 
+def _chunk(text: str, size: int, overlap: int) -> list[str]:
+    """Split text into overlapping character chunks (empties dropped)."""
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= size:
+        return [text]
+    step = max(1, size - overlap)
+    return [text[i:i + size] for i in range(0, len(text), step)]
+
+
 @dataclass(frozen=True)
 class SearchHit:
-    """A single retrieval result with doc-level score and best-section hint."""
+    """A retrieval result: doc-level score, best-section hint, matched snippet."""
 
     doc_id: str
     title: str
@@ -41,21 +55,24 @@ class SearchHit:
     score: float
     section_name: str | None
     section_idx: int | None
+    snippet: str = ""
 
 
 @dataclass(frozen=True)
 class _Unit:
-    """Internal BM25 indexing unit: either a doc-summary or a section."""
+    """Internal BM25 unit: a doc-summary (chunk="") or one section-content chunk."""
 
     doc_id: str
     section_name: str | None
     section_idx: int | None
+    chunk: str
 
 
 class SearchIndex:
-    """BM25 index where each unit is a doc-summary or a section."""
+    """BM25 index over per-doc summary units + per-section-content chunk units."""
 
-    def __init__(self, reader: Reader) -> None:
+    def __init__(self, reader: Reader, *, chunk_chars: int = 1200,
+                 overlap: int = 200) -> None:
         self._units: list[_Unit] = []
         self._meta: dict[str, tuple[str, str]] = {}  # doc_id -> (title, tldr)
         corpus: list[list[str]] = []
@@ -68,67 +85,56 @@ class SearchIndex:
                 d.get("abstract") or "",
             ])
             corpus.append(tokenize_mixed(summary))
-            self._units.append(_Unit(d["doc_id"], None, None))
+            self._units.append(_Unit(d["doc_id"], None, None, ""))
             for s in d["sections"]:
-                text = " ".join([s["name"], s["tldr"], s["content"]])
-                corpus.append(tokenize_mixed(text))
-                self._units.append(_Unit(d["doc_id"], s["name"], s["idx"]))
+                for ch in _chunk(s["content"], chunk_chars, overlap):
+                    # index the raw chunk text only. Prepending section name/tldr
+                    # to every chunk injects the same metadata into hundreds of
+                    # chunks of a giant single-section doc, diluting BM25; the
+                    # doc-summary unit already carries title/tldr/keywords.
+                    corpus.append(tokenize_mixed(ch))
+                    self._units.append(_Unit(d["doc_id"], s["name"], s["idx"], ch))
         self._bm25 = BM25Okapi(corpus) if corpus else None
 
     def search(self, query: str, *, top_k: int = 8) -> list[SearchHit]:
-        """Search for relevant documents using BM25.
+        """BM25 search; aggregate chunk/summary scores to doc level (max).
 
-        Aggregates doc-summary and section unit scores to doc level (max score).
-        The best-matching section is surfaced as a hint in the SearchHit.
-
-        Args:
-            query: Search query string (may be bilingual).
-            top_k: Maximum number of results to return.
-
-        Returns:
-            List of SearchHit sorted by descending score.
+        The best-matching content chunk supplies the section hint and a snippet.
         """
         if self._bm25 is None:
             return []
         scores = self._bm25.get_scores(tokenize_mixed(query))
         best_doc: dict[str, float] = {}
-        # best_sec stores (section_name, section_idx, score) per doc_id
-        best_sec: dict[str, tuple[str | None, int | None, float]] = {}
+        # best content chunk per doc: (section_name, section_idx, chunk, score)
+        best_chunk: dict[str, tuple[str | None, int | None, str, float]] = {}
         for i, u in enumerate(self._units):
             sc = float(scores[i])
             if sc > best_doc.get(u.doc_id, -1.0):
                 best_doc[u.doc_id] = sc
-            # track best *section* unit separately (ignore doc-summary units)
-            if u.section_idx is not None:
-                cur = best_sec.get(u.doc_id)
-                if cur is None or sc > cur[2]:
-                    best_sec[u.doc_id] = (u.section_name, u.section_idx, sc)
-        ranked = sorted(best_doc, key=lambda d: best_doc[d], reverse=True)
-        ranked = [d for d in ranked if best_doc[d] > 0.0][:top_k]
+            if u.section_idx is not None:  # a content chunk, not the summary unit
+                cur = best_chunk.get(u.doc_id)
+                if cur is None or sc > cur[3]:
+                    best_chunk[u.doc_id] = (u.section_name, u.section_idx, u.chunk, sc)
+        ranked = [d for d in sorted(best_doc, key=lambda d: best_doc[d], reverse=True)
+                  if best_doc[d] > 0.0][:top_k]
         hits: list[SearchHit] = []
         for doc_id in ranked:
             title, tldr = self._meta[doc_id]
-            sec = best_sec.get(doc_id)
+            c = best_chunk.get(doc_id)
+            snippet = " ".join(c[2].split())[:400] if (c and c[2]) else ""
             hits.append(SearchHit(
                 doc_id=doc_id,
                 title=title,
                 tldr=tldr,
                 score=best_doc[doc_id],
-                section_name=(sec[0] if sec else None),
-                section_idx=(sec[1] if sec else None),
+                section_name=(c[0] if c else None),
+                section_idx=(c[1] if c else None),
+                snippet=snippet,
             ))
         return hits
 
     def search_many(self, queries: list[str], *, top_k: int = 8) -> list[SearchHit]:
-        """Search with multiple queries, deduplicating by doc_id (keep highest score).
-
-        Args:
-            queries: List of query strings.
-            top_k: Maximum number of results to return.
-
-        Returns:
-            Deduplicated list of SearchHit sorted by descending score.
-        """
+        """Search with multiple queries, dedup by doc_id keeping the highest score."""
         merged: dict[str, SearchHit] = {}
         for q in queries:
             for h in self.search(q, top_k=top_k):

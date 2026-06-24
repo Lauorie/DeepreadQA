@@ -97,3 +97,11 @@ def test_grep_includes_section_name(populated_store):
     box = _box(populated_store)
     out = box.execute("grep", {"doc_id": "en_paper.md", "patterns": ["ALE"]})
     assert "Method" in out
+
+
+def test_read_section_default_skips_front_matter(populated_store):
+    # en_paper section 0 is "ABSTRACT" (front matter) -> default read should skip
+    # to the first substantive section "1. Introduction"
+    box = _box(populated_store)
+    out = box.execute("read_section", {"doc_id": "en_paper.md"})
+    assert "SECTION en_paper.md :: 1. Introduction" in out
