@@ -1,3 +1,0 @@
-VERDICT: APPROVE
-
-Required changes: []
