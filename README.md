@@ -201,3 +201,138 @@ python3 -c "import json;print(json.load(open('runs/deepreadqa.eval.json'))['aggr
 - `deepreadqa/`：在线层——`retrieval`（chunk BM25）/ `tools`（8 工具）/ `prompts`（守则 + 事实完整 compose）/ `harness`（agentic 循环）/ `llm` / `config`
 - `run_eval.py`、`scripts/score.sh`：评测驱动 + cae-rubrics-eval 打分封装
 - `tests/`：98 个单元测试；`docs/review/`：GPT-5.5 多轮代码审查
+
+---
+
+## 十二、后端集成与上线指南（面向接入开发）
+
+> 本节是给后端同学的**接入说明**：DeepreadQA 是一个 **Python 库**（不是现成的 HTTP 服务），后端按下面的方式构造一次、用 `answer()` 逐题问答，自己包一层 API（FastAPI/Flask 等）即可上线。
+
+### 12.1 交付形态与前置条件
+
+- **形态**：Python 包 `deepreadqa`（在线问答）+ `deepread_sdk`（离线建库）。无内置 web 服务。
+- **运行前必须具备**：① 已建好的 SQLite 知识库 `store/cae.db`（见 12.3，**离线建一次、上线只读复用**）；② 一个 OpenAI 兼容的 LLM 端点 + key（默认 aiberm）。
+- **Python**：3.10+。本机仅 `python3` 在 PATH（注意别用 `python`）。
+
+### 12.2 安装与配置
+
+```bash
+cd /home/juli/CAE-QA/DeepreadQA
+python3 -m pip install -e .        # 生产装运行依赖；带测试用 ".[dev]"
+cp .env.example .env               # 填真实 key（.env 已 gitignore，勿提交）
+```
+
+**环境变量**（`.env` 或进程环境注入；进程环境优先级高于 `.env`）：
+
+| 变量 | 作用 | 默认 / 示例 |
+|---|---|---|
+| `AIBERM_BASE_URL` | LLM 端点（OpenAI 兼容） | `https://aiberm.com/v1` |
+| `AIBERM_API_KEY` | **必填**，LLM key | `sk-...` |
+| `DEEPREAD_AGENT_MODEL` | 在线作答模型 | `anthropic/claude-opus-4.8` |
+| `DEEPREAD_ENRICH_MODEL` | 离线建库的章节增强模型 | `deepseek/deepseek-v4-flash` |
+| `DEEPREAD_DB` | 在线读取的库路径（覆盖默认） | `store/cae.db` |
+| `DEEPREAD_KB_ROOT` | 知识库源目录（仅建库用） | `/home/juli/CAE-QA/cae-mds` |
+
+> 安全：key 只走环境变量/`.env`，**不要硬编码进代码或镜像**。
+
+### 12.3 一次性离线建库（上线前置，不在请求路径里）
+
+知识库 markdown → 结构化 SQLite。**建一次，全程复用；内容哈希增量**（改了哪几篇只重建哪几篇）：
+
+```bash
+python3 -m deepread_sdk.build --db store/cae.db --kb-root /path/to/mds --workers 8
+# 产出 store/cae.db（约 33MB / 226 篇）。上线只需把这个 .db 随服务一起部署、只读挂载。
+```
+
+### 12.4 在线调用 API（核心）
+
+```python
+from deepreadqa import Config, DeepreadQA   # AgentResult 也可按需 import
+
+# ① 进程启动时构造一次（会加载 SQLite + 在内存建 BM25 索引，约 5s）——必须复用，勿每请求新建
+cfg = Config.from_env(concise_compose=True)          # concise_compose=True 即生产 v11 作答头
+qa  = DeepreadQA(cfg)
+
+# ② 每个请求调用一次（线程内同步、阻塞，内部是多轮工具循环）
+res = qa.answer("HJC 本构模型模拟混凝土重力坝受冲击时主要考虑哪些效应？")
+
+print(res.answer)          # 给前端的最终答案（已按 rubric 纪律写好，绝不空答）
+```
+
+`Config.from_env(**overrides)` 可覆盖任意配置字段，例如 `Config.from_env(concise_compose=True, max_iterations=15, db_path="store/cae.db")`。
+
+**返回对象 `AgentResult` 字段**：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `answer` | `str` | **最终答案**（返给用户的；正常不为空） |
+| `full_answer` | `str` | compose 前的智能体原始终答（调试用） |
+| `iterations` | `int` | 检索↔阅读回环轮数（≤15） |
+| `total_tokens` | `int` | 本题累计 token（**计费/监控**；并发下见 12.6 注意） |
+| `compactions` | `int` | 工作记忆压缩次数（一般 0） |
+| `forced_final` | `bool` | 是否触顶强制作答（true 表示该题较吃力） |
+| `error` | `str \| None` | 端点/异常信息；正常为 `None` |
+| `tool_calls` | `list[dict]` | 工具调用轨迹（可观测/审计） |
+| `seen_docs` | `set[str]` | 本题命中的文档名（可做"引用来源"展示） |
+
+### 12.5 包成 HTTP 服务（FastAPI 最小示例）
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+from deepreadqa import Config, DeepreadQA
+
+app = FastAPI()
+qa = DeepreadQA(Config.from_env(concise_compose=True))   # 全局单例，启动时建好
+
+class Req(BaseModel):
+    question: str
+
+@app.post("/ask")
+def ask(r: Req):
+    res = qa.answer(r.question)
+    return {"answer": res.answer, "sources": sorted(res.seen_docs),
+            "iterations": res.iterations, "tokens": res.total_tokens,
+            "degraded": res.forced_final, "error": res.error}
+
+@app.get("/healthz")
+def health():                       # 就绪探针：索引已加载即 200
+    return {"ok": True, "model": qa._cfg.endpoint.model}
+```
+
+### 12.6 并发、性能、成本（务必看）
+
+- **单例 + 多进程**：`DeepreadQA` 实例内含**只读** SQLite reader + 内存 BM25 索引，构造一次即可。要并发就**起多个 worker 进程**（如 `uvicorn --workers N`），每进程一个实例。
+- **`answer()` 是阻塞的**：单题内部串行跑多轮 LLM 工具调用，**典型 5–8 轮、十几秒到数十秒**（取决于题难度与端点延迟）。后端请用线程池/异步 worker 承接并发，**别在事件循环里直接 `await` 它**（它是同步函数）。
+- **已知并发注意点**：`total_tokens` 是实例级共享计数，**同一实例并发调用时该数值会相互串扰**（答案本身不受影响）。若要精确计费，**每实例串行**或用"一进程一实例 + 进程级并发"。
+- **超时/重试/限流**：LLM 层每端点 `max_retries_per_endpoint`（默认 2）+ 单次 `request_timeout_s`（默认 180s）。**上线请按你的端点配额压测并设置网关层超时**；端点余额/限流耗尽会让 `answer()` 走强制作答或返回 `error`（见 12.7）。
+- **成本**：作答模型默认 opus-4.8，单题数万 token 量级；如需降本可把 `DEEPREAD_AGENT_MODEL` 换更便宜的模型（注意分数会变，参见 `comparsion.md` 的多模型对比）。
+
+### 12.7 失败语义与降级
+
+- **绝不弃答**：compose 头被要求"证据零散也给明确答案"，所以 `answer` 正常**非空**。
+- **端点异常**：单题 LLM 彻底失败 → 返回的 `AgentResult.error` 非空、`forced_final=True`，`answer` 可能为空字符串——**后端应对空 `answer` 或非空 `error` 做兜底**（重试该题/返回友好提示）。
+- **一题失败不影响其它**：每次 `answer()` 独立，异常被本题吞掉，不会污染进程或其它请求。
+
+### 12.8 切换模型 / 知识库（无需改代码）
+
+```bash
+# 换作答模型：
+DEEPREAD_AGENT_MODEL=glm-5.2 python3 your_service.py
+# 换知识库：先对新语料建库到另一个 .db，再用 DEEPREAD_DB 指过去：
+python3 -m deepread_sdk.build --db store/cae_v2.db --kb-root /path/to/new_mds --workers 8
+DEEPREAD_DB=store/cae_v2.db python3 your_service.py
+```
+
+### 12.9 上线前冒烟
+
+```bash
+# 1) 库可读 + 端点可用 + 端到端一题（约十几秒）：
+python3 -c "
+from deepreadqa import Config, DeepreadQA
+qa=DeepreadQA(Config.from_env(concise_compose=True))
+r=qa.answer('什么是附加质量效应？')
+print('OK len=',len(r.answer),'iters=',r.iterations,'err=',r.error)
+"
+# 2) 跑单元测试：pytest -q
+```

@@ -52,4 +52,10 @@ class Config:
             model=os.environ.get("DEEPREAD_AGENT_MODEL", "anthropic/claude-opus-4.8"),
             omit_temperature=True,  # aiberm opus rejects temperature
         )
+        # DEEPREAD_DB lets a run target an alternate store (e.g. a wisdoc-parsed
+        # corpus) without touching the default mineru DB. Unset -> default cae.db.
+        if "db_path" not in overrides and os.environ.get("DEEPREAD_DB"):
+            overrides["db_path"] = os.environ["DEEPREAD_DB"]
+        if "kb_root" not in overrides and os.environ.get("DEEPREAD_KB_ROOT"):
+            overrides["kb_root"] = os.environ["DEEPREAD_KB_ROOT"]
         return Config(endpoint=ep, **overrides)
