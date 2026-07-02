@@ -6,6 +6,7 @@
 ---
 
 ## 一、摘要（一句话结论）
+<img width="2127" height="1692" alt="image" src="https://github.com/user-attachments/assets/d245facc-40bd-4fdf-8fea-098196b29d17" />
 
 > **渐进式阅读 AgenticRAG 在 CAE 上拿到 v3 三轮均值 0.816，反超忠实复现的 agenticRAG（0.814）。决定成败的从来不是"读得细不细"，而是两件被 94 题小语料掩盖的事：① 对无标题巨型文档的检索召回；② 作答时把证据里的具体事实、数值、范围连同物理含义"用文字写全"。**
 
