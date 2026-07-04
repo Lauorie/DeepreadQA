@@ -15,6 +15,24 @@ def _load_cases(path: str) -> list[dict]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _load_answered(path: Path) -> dict[int, str]:
+    """Map item_idx -> raw prediction line for already-answered (non-empty) items."""
+    answered: dict[int, str] = {}
+    if not path.exists():
+        return answered
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("answer"):
+            answered[rec["item_idx"]] = line
+    return answered
+
+
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -25,6 +43,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--shard", type=int, default=None)
     ap.add_argument("--num-shards", type=int, default=None)
     ap.add_argument("--no-concise", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="keep items already answered (non-empty) in --output; "
+                         "re-run only empty/missing ones")
     args = ap.parse_args(argv)
 
     cfg = Config.from_env(concise_compose=not args.no_concise)
@@ -45,9 +66,20 @@ def main(argv: list[str] | None = None) -> None:
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     rich = out.with_suffix(".rich.jsonl")
-    with out.open("w", encoding="utf-8") as sf, rich.open("w", encoding="utf-8") as rf:
+    answered = _load_answered(out) if args.resume else {}
+    if answered:
+        logger.info("resume: keeping %d already-answered items", len(answered))
+    # predictions are rewritten in case order (kept lines verbatim); the rich
+    # log is appended so earlier trajectories are preserved
+    rich_mode = "a" if args.resume else "w"
+    with out.open("w", encoding="utf-8") as sf, rich.open(rich_mode,
+                                                          encoding="utf-8") as rf:
         for c in cases:
             idx = c["item_idx"]
+            if idx in answered:
+                sf.write(answered[idx] + "\n")
+                sf.flush()
+                continue
             logger.info("answering item %s", idx)
             try:
                 res = qa.answer(c["question"])
@@ -69,6 +101,12 @@ def main(argv: list[str] | None = None) -> None:
                             "tool_calls": res.tool_calls})
             rf.write(json.dumps(rec, ensure_ascii=False) + "\n")
             rf.flush()
+        # answered items outside the current selection are preserved, not dropped
+        # (e.g. resuming with a narrower --ids / different shard filter)
+        selected = {c["item_idx"] for c in cases}
+        for i, ln in answered.items():
+            if i not in selected:
+                sf.write(ln + "\n")
     logger.info("wrote %s and %s", out, rich)
 
 

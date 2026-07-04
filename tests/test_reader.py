@@ -86,6 +86,29 @@ def test_section_empty_name_raises(populated_store):
         r.section("en_paper.md", name="   ")
 
 
+def test_intro_fallback_skips_front_matter(tmp_path):
+    from deepread_sdk import store
+    from deepread_sdk.schema import DocRecord, SectionRecord
+    db = tmp_path / "d.db"
+    conn = store.connect(db)
+    store.init_schema(conn)
+    store.write_document(conn, DocRecord(
+        doc_id="b.md", title="B", language="en", abstract=None, header="",
+        tldr="t", keywords=[], token_count=1, total_characters=1, preview="p",
+        preview_is_truncated=False, raw_md="x", content_hash="h",
+        sections=[
+            SectionRecord(0, "Library of Congress Cataloging", "", 5, 0, 1,
+                          "copyright page"),
+            SectionRecord(1, "Table of Contents", "", 5, 1, 2, "toc lines"),
+            SectionRecord(2, "1.1 Governing equations", "", 5, 2, 3,
+                          "real technical content"),
+        ]))
+    conn.close()
+    # no Introduction-named section: fallback must skip front matter,
+    # not return the copyright page
+    assert Reader(db).intro("b.md") == "real technical content"
+
+
 def test_json_disambiguates_duplicate_section_names(tmp_path):
     from deepread_sdk import store
     from deepread_sdk.schema import DocRecord, SectionRecord

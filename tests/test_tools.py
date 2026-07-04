@@ -47,7 +47,11 @@ def test_grep_finds_term_with_context(populated_store):
 
 
 def test_read_raw_capped(populated_store):
-    box = _box(populated_store)
+    # read_raw is default-disabled; enable it to test the handler itself
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 disabled_tools=())
+    reader = Reader(populated_store)
+    box = ToolBox(cfg, reader, SearchIndex(reader))
     out = box.execute("read_raw", {"doc_id": "en_paper.md"})
     assert "Hydroplaning" in out
 
@@ -59,7 +63,8 @@ def test_unknown_doc_is_graceful(populated_store):
 
 
 def test_read_raw_truncates_when_over_cap(populated_store):
-    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True), raw_token_cap=1)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 raw_token_cap=1, disabled_tools=())
     reader = Reader(populated_store)
     box = ToolBox(cfg, reader, SearchIndex(reader))
     out = box.execute("read_raw", {"doc_id": "en_paper.md"})
@@ -97,6 +102,18 @@ def test_grep_includes_section_name(populated_store):
     box = _box(populated_store)
     out = box.execute("grep", {"doc_id": "en_paper.md", "patterns": ["ALE"]})
     assert "Method" in out
+
+
+def test_disabled_tool_execution_rejected(populated_store):
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 disabled_tools=("intro",))
+    reader = Reader(populated_store)
+    box = ToolBox(cfg, reader, SearchIndex(reader))
+    out = box.execute("intro", {"doc_id": "en_paper.md"})
+    assert "unknown tool" in out
+    assert "en_paper.md" not in box.seen_docs
+    # non-disabled tools still work
+    assert "SECTION" in box.execute("read_section", {"doc_id": "en_paper.md"})
 
 
 def test_read_section_default_skips_front_matter(populated_store):

@@ -136,6 +136,150 @@ def test_collect_evidence_truncates_oversized_latest(populated_store):
     assert count_tokens(ev) <= 40
 
 
+def test_prune_keeps_evidence_for_named_docs(populated_store):
+    reader = Reader(populated_store)
+    qa = DeepreadQA(_cfg(), llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
+    conv = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "问题：Q"},
+        {"role": "tool", "tool_call_id": "a",
+         "content": "SECTION keep.md :: 2. Method (10 tok)\ntldr: t\n---\nKEEP THIS EVIDENCE"},
+        {"role": "tool", "tool_call_id": "b",
+         "content": "SECTION drop.md :: 1. Intro (10 tok)\ntldr: t\n---\nDROP THIS"},
+    ]
+    pruned = qa._prune(conv, "小结", ["keep.md"])
+    joined = "\n".join(str(m.get("content", "")) for m in pruned)
+    assert "KEEP THIS EVIDENCE" in joined
+    assert "DROP THIS" not in joined
+    # pruned conversation must stay API-valid: no orphan tool messages
+    assert all(m["role"] != "tool" for m in pruned)
+
+
+class _SummarizingLLM:
+    """turn1: read_section; turn2: summarize keeping en_paper.md; turn3: final."""
+
+    def __init__(self):
+        self._turn = 0
+        self.msgs_at_final = None
+
+    def chat(self, messages, *, tools=None, tool_choice="auto", max_tokens=None):
+        self._turn += 1
+        if self._turn == 1:
+            tc = _FakeToolCall("c1", "read_section",
+                               '{"doc_id": "en_paper.md", "section": "2. Method"}')
+            return LLMResponse("", [tc], "tool_calls", 5, raw_message=_Msg([tc]))
+        if self._turn == 2:
+            tc = _FakeToolCall(
+                "c2", "summarize",
+                '{"summary": "已读方法章", "keep_doc_ids": ["en_paper.md"]}')
+            return LLMResponse("", [tc], "tool_calls", 5, raw_message=_Msg([tc]))
+        self.msgs_at_final = [dict(m) for m in messages]
+        return LLMResponse("done", [], "stop", 5, raw_message=_Msg([]))
+
+
+def test_summarize_keep_doc_ids_survive_compaction(populated_store):
+    reader = Reader(populated_store)
+    llm = _SummarizingLLM()
+    qa = DeepreadQA(_cfg(), llm=llm, reader=reader, index=SearchIndex(reader))
+    res = qa.answer("Q")
+    assert res.compactions == 1
+    joined = "\n".join(str(m.get("content", "")) for m in llm.msgs_at_final)
+    # the read section content of the kept doc survives the compaction
+    assert "ALE coupling" in joined
+
+
+class _BadArgsLLM:
+    """turn1: search with truncated JSON args; turn2: final (records feedback)."""
+
+    def __init__(self):
+        self._turn = 0
+        self.feedback = None
+
+    def chat(self, messages, *, tools=None, tool_choice="auto", max_tokens=None):
+        self._turn += 1
+        if self._turn == 1:
+            tc = _FakeToolCall("c1", "search", '{"queries": ["ALE"')
+            return LLMResponse("", [tc], "tool_calls", 5, raw_message=_Msg([tc]))
+        self.feedback = next(m["content"] for m in reversed(messages)
+                             if m.get("role") == "tool")
+        return LLMResponse("final", [], "stop", 5, raw_message=_Msg([]))
+
+
+def test_malformed_tool_json_gets_explicit_error_feedback(populated_store):
+    reader = Reader(populated_store)
+    llm = _BadArgsLLM()
+    qa = DeepreadQA(_cfg(), llm=llm, reader=reader, index=SearchIndex(reader))
+    res = qa.answer("Q")
+    assert res.answer == "final"
+    assert "not valid JSON" in llm.feedback
+
+
+class _NoCounterLLM:
+    """Reports per-response usage but exposes NO total_tokens attribute:
+    AgentResult.total_tokens must be derived from responses, not client state."""
+
+    def __init__(self):
+        self._calls = 0
+
+    def chat(self, messages, *, tools=None, tool_choice="auto", max_tokens=None):
+        self._calls += 1
+        if self._calls % 2 == 1:
+            tc = _FakeToolCall("c1", "search", '{"queries": ["ALE coupling"]}')
+            return LLMResponse("", [tc], "tool_calls", 11, raw_message=_Msg([tc]))
+        return LLMResponse("done", [], "stop", 7, raw_message=_Msg([]))
+
+
+def test_total_tokens_derived_from_responses_per_answer(populated_store):
+    reader = Reader(populated_store)
+    qa = DeepreadQA(_cfg(), llm=_NoCounterLLM(), reader=reader,
+                    index=SearchIndex(reader))
+    r1 = qa.answer("Q1")
+    r2 = qa.answer("Q2")
+    assert r1.total_tokens == 18  # 11 (search turn) + 7 (final turn)
+    assert r2.total_tokens == 18  # not cumulative across answers
+
+
+class _SchemaRecordingLLM:
+    """Records the tool schema list the harness passes to chat."""
+
+    def __init__(self):
+        self.tools_seen = None
+
+    def chat(self, messages, *, tools=None, tool_choice="auto", max_tokens=None):
+        self.tools_seen = tools
+        return LLMResponse("done", [], "stop", 5, raw_message=_Msg([]))
+
+
+def test_default_tool_surface_is_five_tools(populated_store):
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=False)  # default disabled_tools
+    llm = _SchemaRecordingLLM()
+    qa = DeepreadQA(cfg, llm=llm, reader=reader, index=SearchIndex(reader))
+    qa.answer("Q")
+    names = {t["function"]["name"] for t in llm.tools_seen}
+    assert names == {"search", "head", "read_section", "grep", "summarize"}
+
+
+def test_default_prompts_do_not_reference_disabled_tools():
+    from deepreadqa.prompts import COMPOSE_USER_TEMPLATE, SYSTEM_PROMPT
+    for name in ("intro", "preview", "read_raw"):
+        assert name not in SYSTEM_PROMPT
+        assert name not in COMPOSE_USER_TEMPLATE
+
+
+def test_disabled_tools_removed_from_llm_schemas(populated_store):
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=False,
+                 disabled_tools=("intro", "preview", "read_raw"))
+    llm = _SchemaRecordingLLM()
+    qa = DeepreadQA(cfg, llm=llm, reader=reader, index=SearchIndex(reader))
+    qa.answer("Q")
+    names = {t["function"]["name"] for t in llm.tools_seen}
+    assert names == {"search", "head", "read_section", "grep", "summarize"}
+
+
 def test_local_prune_clean_and_bounded(populated_store):
     reader = Reader(populated_store)
     qa = DeepreadQA(_cfg(), llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))

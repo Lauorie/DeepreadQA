@@ -9,6 +9,12 @@ from .schema import DocRecord
 
 _INTRO_RE = re.compile(r"(introduction|引\s*言|绪\s*论)", re.IGNORECASE)
 
+# front-matter / non-content section names (copyright page, ToC, references …)
+# shared with the online tool layer so all fallbacks skip the same sections
+FRONT_MATTER_RE = re.compile(
+    r"library of congress|table of contents|cataloging|bibliograph|^references?$|"
+    r"acknowledg|声\s*明|摘\s*要|目\s*录|学位论文|致\s*谢|^abstract", re.IGNORECASE)
+
 
 class Reader:
     def __init__(self, db_path: str | Path, *, preview_chars: int = 10000) -> None:
@@ -41,6 +47,10 @@ class Reader:
             return ""
         for s in r.sections:
             if _INTRO_RE.search(s.name):
+                return s.content
+        # no Introduction-named section: first substantive non-front-matter one
+        for s in r.sections:
+            if s.content.strip() and not FRONT_MATTER_RE.search(s.name):
                 return s.content
         return r.sections[0].content
 

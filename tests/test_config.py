@@ -17,3 +17,61 @@ def test_config_from_env(monkeypatch):
     assert cfg.endpoint.api_key == "sk-test"
     assert cfg.endpoint.omit_temperature is True  # opus on aiberm
     assert cfg.max_iterations == 15
+
+
+def test_no_dead_token_warning_ratio_field():
+    import dataclasses
+    assert "token_warning_ratio" not in {f.name for f in dataclasses.fields(Config)}
+
+
+def test_backup_endpoints_default_empty():
+    cfg = Config(endpoint=Endpoint("aiberm", "u", "k", "m", True))
+    assert cfg.backup_endpoints == ()
+
+
+def test_from_env_parses_backup_endpoint(monkeypatch):
+    monkeypatch.setenv("AIBERM_API_KEY", "sk-primary")
+    monkeypatch.setenv("DEEPREAD_BACKUP_BASE_URL", "https://backup.example/v1")
+    monkeypatch.setenv("DEEPREAD_BACKUP_API_KEY", "sk-backup")
+    monkeypatch.setenv("DEEPREAD_BACKUP_MODEL", "same/model")
+    cfg = Config.from_env()
+    assert len(cfg.backup_endpoints) == 1
+    b = cfg.backup_endpoints[0]
+    assert b.base_url == "https://backup.example/v1"
+    assert b.api_key == "sk-backup"
+    assert b.model == "same/model"
+
+
+def test_disabled_tools_default_is_low_freq_trio():
+    # ablation-validated production default (runs/abl5*, comparsion.md §11)
+    cfg = Config(endpoint=Endpoint("aiberm", "u", "k", "m", True))
+    assert cfg.disabled_tools == ("intro", "preview", "read_raw")
+
+
+def test_from_env_disabled_tools_none_reenables_all(monkeypatch):
+    monkeypatch.setenv("AIBERM_API_KEY", "sk-test")
+    monkeypatch.setenv("DEEPREAD_DISABLED_TOOLS", "none")
+    assert Config.from_env().disabled_tools == ()
+
+
+def test_from_env_disabled_tools_empty_string_reenables_all(monkeypatch):
+    monkeypatch.setenv("AIBERM_API_KEY", "sk-test")
+    monkeypatch.setenv("DEEPREAD_DISABLED_TOOLS", "")
+    assert Config.from_env().disabled_tools == ()
+
+
+def test_from_env_parses_disabled_tools(monkeypatch):
+    monkeypatch.setenv("AIBERM_API_KEY", "sk-test")
+    monkeypatch.setenv("DEEPREAD_DISABLED_TOOLS", "intro, preview,read_raw")
+    cfg = Config.from_env()
+    assert cfg.disabled_tools == ("intro", "preview", "read_raw")
+
+
+def test_from_env_backup_model_defaults_to_primary(monkeypatch):
+    monkeypatch.setenv("AIBERM_API_KEY", "sk-primary")
+    monkeypatch.setenv("DEEPREAD_AGENT_MODEL", "primary/model")
+    monkeypatch.setenv("DEEPREAD_BACKUP_BASE_URL", "https://backup.example/v1")
+    monkeypatch.setenv("DEEPREAD_BACKUP_API_KEY", "sk-backup")
+    monkeypatch.delenv("DEEPREAD_BACKUP_MODEL", raising=False)
+    cfg = Config.from_env()
+    assert cfg.backup_endpoints[0].model == "primary/model"

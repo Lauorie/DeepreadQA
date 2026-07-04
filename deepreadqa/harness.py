@@ -9,9 +9,12 @@ from deepread_sdk import Reader
 
 from .config import Config
 from .llm import LLMError, ToolLLM
-from .prompts import (COMPOSE_SYSTEM, COMPOSE_USER_TEMPLATE, FORCE_FINAL_PROMPT,
-                      FORCE_SUMMARIZE_PROMPT, SYSTEM_PROMPT)
+from .prompts import (ADDENDUM_USER_TEMPLATE, COMPOSE_SYSTEM,
+                      COMPOSE_USER_TEMPLATE, FORCE_FINAL_PROMPT,
+                      FORCE_SUMMARIZE_PROMPT, SYSTEM_PROMPT, VERIFY_SYSTEM,
+                      VERIFY_USER_TEMPLATE)
 from .retrieval import SearchIndex
+from .verify import parse_verify, run_probes
 from .tokens import count_messages_tokens
 from deepread_sdk.tokens import truncate_to_tokens
 from .tools import TOOL_SCHEMAS, ToolBox
@@ -32,12 +35,25 @@ class AgentResult:
     seen_docs: set[str] = field(default_factory=set)
 
 
-def _parse_call(tc) -> tuple[str, dict]:
+class _Tally:
+    """Per-answer token accumulator; kept local to the call so concurrent
+    answers on a shared client cannot cross-contaminate accounting."""
+
+    __slots__ = ("total",)
+
+    def __init__(self) -> None:
+        self.total = 0
+
+
+def _parse_call(tc) -> tuple[str, dict | None]:
+    """Return (name, args); args is None when the arguments are not a JSON object."""
     name = tc.function.name
     try:
         args = json.loads(tc.function.arguments or "{}")
     except json.JSONDecodeError:
-        args = {}
+        return name, None
+    if not isinstance(args, dict):
+        return name, None
     return name, args
 
 
@@ -55,14 +71,15 @@ class DeepreadQA:
         self._cfg = cfg
         self._reader = reader or Reader(cfg.db_path)
         self._index = index or SearchIndex(self._reader)
-        self._llm = llm or ToolLLM(cfg.endpoint,
+        self._llm = llm or ToolLLM(cfg.endpoint, backups=cfg.backup_endpoints,
                                    request_timeout_s=cfg.request_timeout_s,
                                    max_retries_per_endpoint=cfg.max_retries_per_endpoint)
+        self._tools = [t for t in TOOL_SCHEMAS
+                       if t["function"]["name"] not in set(cfg.disabled_tools)]
 
     def answer(self, question: str) -> AgentResult:
         cfg = self._cfg
-        if hasattr(self._llm, "total_tokens"):
-            self._llm.total_tokens = 0
+        tally = _Tally()
         box = ToolBox(cfg, self._reader, self._index)
         conversation: list[dict] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -73,21 +90,21 @@ class DeepreadQA:
 
         for i in range(cfg.max_iterations):
             if count_messages_tokens(conversation) >= cfg.token_threshold:
-                conversation, did = self._compress(conversation)
+                conversation, did = self._compress(conversation, tally)
                 compactions += 1 if did else 0
             try:
-                resp = self._llm.chat(conversation, tools=TOOL_SCHEMAS,
-                                      tool_choice="auto",
-                                      max_tokens=cfg.max_output_tokens)
+                resp = self._chat(tally, conversation, tools=self._tools,
+                                  tool_choice="auto",
+                                  max_tokens=cfg.max_output_tokens)
             except LLMError as exc:
                 return self._finish(question, conversation, call_log, box, i + 1,
-                                    compactions, forced=True, error=str(exc))
+                                    compactions, tally, forced=True, error=str(exc))
 
             if not resp.tool_calls:
-                final = self._finalize(question, conversation, resp.content)
+                final = self._finalize(question, conversation, resp.content,
+                                       tally, box)
                 return AgentResult(answer=final, full_answer=resp.content,
-                                   iterations=i + 1,
-                                   total_tokens=getattr(self._llm, "total_tokens", 0),
+                                   iterations=i + 1, total_tokens=tally.total,
                                    compactions=compactions, forced_final=False,
                                    error=None, tool_calls=call_log,
                                    seen_docs=set(box.seen_docs))
@@ -96,7 +113,10 @@ class DeepreadQA:
             pending = None
             for tc in resp.tool_calls:
                 name, args = _parse_call(tc)
-                if name == "summarize":
+                if args is None:
+                    result = (f"error: arguments for tool {name!r} were not valid "
+                              "JSON; re-issue the call with corrected JSON arguments")
+                elif name == "summarize":
                     pending = (args.get("summary", ""), args.get("keep_doc_ids", []))
                     result = "Acknowledged; context will be consolidated."
                 else:
@@ -105,36 +125,77 @@ class DeepreadQA:
                 conversation.append({"role": "tool", "tool_call_id": tc.id,
                                      "content": result})
             if pending is not None:
-                conversation = self._prune(conversation, pending[0])
+                conversation = self._prune(conversation, pending[0], pending[1])
                 compactions += 1
 
         return self._finish(question, conversation, call_log, box,
-                            cfg.max_iterations, compactions, forced=True, error=None)
+                            cfg.max_iterations, compactions, tally,
+                            forced=True, error=None)
 
     # --- helpers ----------------------------------------------------------
-    def _compress(self, conversation: list[dict]) -> tuple[list[dict], bool]:
+    def _chat(self, tally: _Tally, messages: list[dict], **kwargs):
+        resp = self._llm.chat(messages, **kwargs)
+        tally.total += int(getattr(resp, "total_tokens", 0) or 0)
+        return resp
+
+    def _compress(self, conversation: list[dict],
+                  tally: _Tally) -> tuple[list[dict], bool]:
         try:
-            resp = self._llm.chat(
+            resp = self._chat(
+                tally,
                 conversation + [{"role": "user", "content": FORCE_SUMMARIZE_PROMPT}],
-                tools=TOOL_SCHEMAS,
+                tools=self._tools,
                 tool_choice={"type": "function", "function": {"name": "summarize"}},
                 max_tokens=self._cfg.max_output_tokens)
             if resp.tool_calls:
                 _, args = _parse_call(resp.tool_calls[0])
-                return self._prune(conversation, args.get("summary", "")), True
+                if args is not None:
+                    return self._prune(conversation, args.get("summary", ""),
+                                       args.get("keep_doc_ids", [])), True
         except LLMError:
             logger.warning("model compression failed; applying local prune")
         return self._local_prune(conversation), True
 
-    def _prune(self, conversation: list[dict], summary: str) -> list[dict]:
-        """Keep system + original user question, drop tool chatter, append summary."""
+    def _prune(self, conversation: list[dict], summary: str,
+               keep_doc_ids: list[str] | tuple[str, ...] = ()) -> list[dict]:
+        """Keep system + original user question, drop tool chatter, append the
+        summary plus the opened content of the docs the model asked to keep."""
         kept = [conversation[0]]
         user = next((m for m in conversation if m.get("role") == "user"), None)
         if user is not None:
             kept.append(user)
-        kept.append({"role": "assistant",
-                     "content": f"进度小结（已压缩上下文）：{summary}"})
+        content = f"进度小结（已压缩上下文）：{summary}"
+        evidence = self._kept_evidence(conversation, keep_doc_ids)
+        if evidence:
+            content += "\n\n保留的已读证据：\n" + evidence
+        kept.append({"role": "assistant", "content": content})
         return kept
+
+    def _kept_evidence(self, conversation: list[dict],
+                       keep_doc_ids: list[str] | tuple[str, ...]) -> str:
+        """Newest-first tool outputs whose header names a kept doc, within half
+        the token threshold (folded into the summary message so the pruned
+        conversation stays API-valid: no orphan tool messages)."""
+        ids = [d for d in keep_doc_ids or () if d]
+        if not ids:
+            return ""
+        budget = self._cfg.token_threshold // 2
+        used = 0
+        blocks: list[str] = []
+        for m in reversed(conversation):
+            if m.get("role") != "tool":
+                continue
+            content = str(m.get("content", ""))
+            first_line = content.split("\n", 1)[0]
+            if not any(d in first_line for d in ids):
+                continue
+            t = count_messages_tokens([m])
+            if used + t > budget:
+                break
+            blocks.append(content)
+            used += t
+        blocks.reverse()
+        return "\n\n".join(blocks)
 
     def _local_prune(self, conversation: list[dict]) -> list[dict]:
         """Deterministic fallback compaction: system + first user + a synthetic
@@ -160,7 +221,8 @@ class DeepreadQA:
                      "content": "进度小结（本地压缩，保留近期证据）：\n" + "\n\n".join(tail)})
         return kept
 
-    def _finalize(self, question: str, conversation: list[dict], draft: str) -> str:
+    def _finalize(self, question: str, conversation: list[dict], draft: str,
+                  tally: _Tally, box: ToolBox | None = None) -> str:
         if not self._cfg.concise_compose:
             return draft
         evidence = self._collect_evidence(conversation)
@@ -168,13 +230,62 @@ class DeepreadQA:
         user = COMPOSE_USER_TEMPLATE.format(question=question, evidence=evidence,
                                             draft_block=draft_block)
         try:
-            resp = self._llm.chat(
+            resp = self._chat(
+                tally,
                 [{"role": "system", "content": COMPOSE_SYSTEM},
                  {"role": "user", "content": user}],
                 max_tokens=self._cfg.compose_max_tokens)
-            return resp.content.strip() or draft
+            composed = resp.content.strip() or draft
         except LLMError:
             return draft
+        if not self._cfg.verify_loop:
+            return composed
+        revised = self._verify_repair(question, evidence, composed, tally, box)
+        return revised or composed
+
+    def _verify_repair(self, question: str, evidence: str, answer: str,
+                       tally: _Tally, box: ToolBox | None) -> str | None:
+        """Axis ②: review the composed answer, probe missed aspects, revise.
+
+        Best-effort by construction — any failure returns ``None`` and the
+        caller keeps the composed answer.
+        """
+        try:
+            resp = self._chat(
+                tally,
+                [{"role": "system", "content": VERIFY_SYSTEM},
+                 {"role": "user", "content": VERIFY_USER_TEMPLATE.format(
+                     question=question, evidence=evidence, answer=answer)}],
+                max_tokens=self._cfg.compose_max_tokens)
+        except LLMError:
+            return None
+        report = parse_verify(resp.content)
+        logger.info("verify: verdict=%s missing=%d probes=%s", report.verdict,
+                    len(report.missing), [p[0] for p in report.probes])
+        if report.verdict == "PASS":
+            return None
+        extra = ""
+        if box is not None and report.probes:
+            extra = run_probes(box, report.probes,
+                               max_probes=self._cfg.verify_max_probes)
+        missing = "\n".join(f"- {m}" for m in report.missing) or "- 无"
+        user = ADDENDUM_USER_TEMPLATE.format(
+            question=question, evidence=evidence,
+            extra_evidence=extra or "（无）", missing=missing, answer=answer)
+        try:
+            resp = self._chat(
+                tally,
+                [{"role": "system", "content": COMPOSE_SYSTEM},
+                 {"role": "user", "content": user}],
+                max_tokens=self._cfg.compose_max_tokens)
+        except LLMError:
+            return None
+        additions = resp.content.strip()
+        if not additions or additions.startswith("无"):
+            return None
+        # append-only merge: the composed answer survives verbatim by
+        # construction; the model cannot delete or rephrase it.
+        return f"{answer}\n\n补充要点：\n{additions}"
 
     def _collect_evidence(self, conversation: list[dict]) -> str:
         budget = self._cfg.compose_evidence_token_cap
@@ -199,18 +310,19 @@ class DeepreadQA:
         chunks.reverse()
         return "\n\n".join(chunks)
 
-    def _finish(self, question, conversation, call_log, box, iters, compactions, *,
-                forced: bool, error: str | None) -> AgentResult:
+    def _finish(self, question, conversation, call_log, box, iters, compactions,
+                tally: _Tally, *, forced: bool, error: str | None) -> AgentResult:
         try:
-            resp = self._llm.chat(
+            resp = self._chat(
+                tally,
                 conversation + [{"role": "user", "content": FORCE_FINAL_PROMPT}],
                 max_tokens=self._cfg.max_output_tokens)
             draft = resp.content
         except LLMError as exc:
             draft = ""
             error = error or str(exc)
-        final = self._finalize(question, conversation, draft)
+        final = self._finalize(question, conversation, draft, tally, box)
         return AgentResult(answer=final, full_answer=draft, iterations=iters,
-                           total_tokens=getattr(self._llm, "total_tokens", 0),
-                           compactions=compactions, forced_final=forced, error=error,
+                           total_tokens=tally.total, compactions=compactions,
+                           forced_final=forced, error=error,
                            tool_calls=call_log, seen_docs=set(box.seen_docs))

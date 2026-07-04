@@ -8,13 +8,15 @@
 ## 一、摘要（一句话结论）
 <img width="2127" height="1692" alt="image" src="https://github.com/user-attachments/assets/d245facc-40bd-4fdf-8fea-098196b29d17" />
 
-> **渐进式阅读 AgenticRAG 在 CAE 上拿到 v3 三轮均值 0.816，反超忠实复现的 agenticRAG（0.814）。决定成败的从来不是"读得细不细"，而是两件被 94 题小语料掩盖的事：① 对无标题巨型文档的检索召回；② 作答时把证据里的具体事实、数值、范围连同物理含义"用文字写全"。**
+> **渐进式阅读 AgenticRAG 在 CAE 上拿到 v3 三轮均值 0.816（v11，8 工具/旧库），反超忠实复现的 agenticRAG（0.814）；2026-07-04 的 VLM-OCR 语料修复再推至 0.82~0.83 —— 这是本评测口径下的诚实高原（参考答案自身仅 ~0.814）。** 决定成败的从来不是"读得细不细"，而是：① 对无标题巨型文档的检索召回；② 作答时把证据里的具体事实、数值、范围连同物理含义"用文字写全"；③ 语料解析时被静默丢掉的图表与正文（VLM-OCR 修复）。
 
-| 系统 | mean_anchored (v3) | 备注 |
+| 系统 | mean_score (v3) | 备注 |
 |---|---|---|
-| **DeepreadQA（最终 v11）** | **0.816**（三轮 0.8246 / 0.8243 / 0.7984） | 渐进式阅读 + chunk 召回 + 尺寸感知切章 + 读后再断 + compose 事实完整性 |
-| DeepreadQA（v10） | 0.805（0.814 / 0.792 / 0.808） | 加事实完整性规则之前 |
+| **DeepreadQA + VLM-OCR 修复库** | **0.8185~0.8282**（三种回填布局的 3 轮均值带；生产取 v3 布局 0.8185，v1 布局点估计最高 0.8282） | 5 工具默认面 + `store/cae_vlmocr.db`；布局间差异小于判分噪声（comparsion.md §12） |
+| DeepreadQA（5 工具，旧库基线） | 0.8139（三轮） | 工具消融后的默认面 |
+| DeepreadQA（v11，8 工具，旧库） | 0.8158（三轮；anchored 0.816） | 渐进式阅读 + chunk 召回 + 尺寸感知切章 + 读后再断 + compose 事实完整性 |
 | agenticRAG（简洁作答头） | 0.814 | 全文 1.1k 字 chunk BM25 + 大行窗阅读 |
+| （对照）参考答案自身 | ~0.814 | 同 judge 下测定——0.85 属"超参考答案"区间，已正式弃追 |
 
 评分口径：官方 rubric 打分器，judge = `gpt-5.4-mini`，**v3** 校准 rubric，n=94，0 错误、0 空答案，三数完全可比。judge 非确定性：聚合 ~±0.04、单题 ±1.0，故一律用三轮均值，不追 0.03 以内的差异。
 
@@ -46,7 +48,7 @@ flowchart TD
     subgraph ON["在线 · deepreadqa（每题一次）"]
       direction TB
       Q["一道问题"] --> RT["BM25 检索<br/>chunk 单元 + 文档摘要单元"]
-      RT --> AG["opus-4.8 · 8 工具 agentic 循环<br/>search → head → read_section / grep → …"]
+      RT --> AG["opus-4.8 · 5 工具 agentic 循环<br/>search → head → read_section / grep → …"]
       AG --> CP["rubric 对齐的简洁 compose 头"]
       CP --> OUT["{item_idx, answer}"]
     end
@@ -81,7 +83,7 @@ flowchart TD
     style C fill:#e8f8ee,stroke:#22c55e
 ```
 
-**八个工具**（与 agenticRAG 的"按行号读窗"不同，这里读的是预切好的"完整章节"）：`search` 双语多查询，在进程启动时一次性把每篇文档的章节正文切成 1200 字/200 重叠的 chunk、连同"文档摘要单元"建好 BM25 倒排常驻内存，每次只做在线打分、每篇取最高分 chunk 代表参与排序、返回前 20；`head` 给出文档首部——摘要 + 章节目录，每章带 TL;DR 和 token 预算，是"费用敏感型筛选"的关键；`read_section` 按章名或 idx 读某一整章（无目标时自动跳过版权页/摘要/目录等前置内容，截到 6000 token）；`intro` 直读引言；`preview` 低成本前缀预览；`grep` 在单篇内做子串匹配并把命中映射回章节名、返回上下文（截到 9000 token）；`read_raw` 末手段读全文（截到 40000 token）；`summarize` 在工作记忆过大时压缩、保留点名的证据。两条护栏：最多 15 轮检索↔阅读回环；compose 证据上限 40000 token，超出则本地剪枝。
+**工具面（默认启用 5 个）**（与 agenticRAG 的"按行号读窗"不同，这里读的是预切好的"完整章节"）：`search` 双语多查询，在进程启动时一次性把每篇文档的章节正文切成 1200 字/200 重叠的 chunk、连同"文档摘要单元"建好 BM25 倒排常驻内存，每次只做在线打分、每篇取最高分 chunk 代表参与排序、返回前 20；`head` 给出文档首部——摘要 + 章节目录，每章带 TL;DR 和 token 预算，是"费用敏感型筛选"的关键；`read_section` 按章名或 idx 读某一整章（无目标时自动跳过版权页/摘要/目录等前置内容，截到 6000 token）；`grep` 在单篇内做子串匹配并把命中映射回章节名、返回上下文（截到 9000 token）；`summarize` 在工作记忆过大时压缩、保留点名的证据。另有 `intro`（直读引言）/`preview`（前缀预览）/`read_raw`（全文，截到 40000 token）三个工具**默认禁用**——跨 6 模型消融验证移除无损且省 token（见工程要点与 comparsion.md §11），`DEEPREAD_DISABLED_TOOLS=none` 可恢复。两条护栏：最多 15 轮检索↔阅读回环；compose 证据上限 40000 token，超出则本地剪枝。
 
 **与 agenticRAG 的本质区别**：agenticRAG 的 `open` 是"按行号读 1800 行原始窗口"——纯文件切片；DeepreadQA 的 `read_section` 读的是**离线就切好、且带 TL;DR 和 token 预算的完整章节**，`head` 给的是**真正的目录**而非前缀。两者检索都用词法 BM25、都不上 embedding，但 DeepreadQA 多了一层"结构化数据层"，让"先看目录再点读"成为可能。
 
@@ -151,15 +153,24 @@ flowchart LR
 
 ---
 
-## 八、0.85 是结构性天花板（诚实）
+## 八、~0.83 是本评测口径下的诚实高原（四条轴全部试毕，2026-07-04 定案）
 
-冲 0.85 没有成功，且这是**结构性天花板、不是没调够**，有三条独立的封顶证据：① **prompt 轴已 Pareto 饱和**——v11 与 v12 证明 completeness 与 anti_hacking 1:1 对冲，往任一侧再推都净负；② **文本不可答的硬封顶**——item 23、item 45 的知识在 PDF→markdown 丢掉的图里，item 1 的"抗压↑2 倍/抗拉↑7 倍"在抽取时丢成了"提高到 倍"，这几题文本上约 0 分压着；③ judge 聚合噪声 ±0.04，而参照系统自身也才 0.814。**唯一能突破的实质杠杆是在 enrich 阶段对图/表做 VLM-OCR**（把 item 23/45 的曲线、item 1 参数表的数字补回文本）——这是数据层的活，不是 prompt 调参。
+四条优化轴都已做到头，每条都有三轮均值级的证据（详见 `comparsion.md` §11–13）：
+
+1. **prompt 轴：Pareto 饱和。** v11/v12 证明 completeness 与 anti_hacking 1:1 对冲，往任一侧再推都净负。
+2. **数据轴：VLM-OCR 修复已执行、已兑现。** 8 篇 gold 的源 PDF 逐页转写回填（286 页，`scripts/vlm_ocr_repair.py`），图表/数字硬上限**永久解除**（item23 0.15→0.84~0.94、item45 0.32→0.69~0.81），三种回填布局 0.8185~0.8282，布局间差异已小于判分噪声——这条轴也到底了。
+3. **答案轴：核验-修补回路中性收场。** 重写式 −0.016 有害；"只增不改"式 ≈ 打平——v3 rubric 的负向准则会对"补全"对称扣分（`verify_loop` 默认关，comparsion.md §13）。
+4. **模型轴：平坦。** 六模型 0.77~0.82，模型不是主要变量。
+
+封顶的外部参照：judge 聚合噪声 ±0.04，且**参考答案自身在同一 judge 下仅得 ~0.814**——当前系统（0.8185~0.8282）已超过参考答案；把 mean_score 推到 0.85 意味着比参考答案再高 0.036，其性质是拟合判分器的宽容结构而非知识质量。**故正式把 ~0.83（3 轮均值）定为本评测口径下的结项高原，0.85 目标弃追。**
 
 ---
 
 ## 九、工程要点与踩坑
 
-- **aiberm 的 opus 拒收 `temperature`**：`omit_temperature=True` 全程不发该参数即根治；LLM 层另带瞬时 5xx 重试。
+- **aiberm 的 opus 拒收 `temperature`**：`omit_temperature=True` 全程不发该参数即根治；LLM 层按端点自动禁用。
+- **重试分类 + 端点 failover**：瞬时错误（超时/429/5xx，含 intern-ai 用 HTTP 400 报的"请求过于频繁"）在本端点退避重试；配额/鉴权类错误（401/403 等）不做无谓重试，直接切换到 `DEEPREAD_BACKUP_*` 配置的备用端点（进程内粘性，不再回探已死端点）——对应 qwen 评测中 aiberm 余额耗尽导致 88/94 空答整轮作废的事故。
+- **工具消融（2026-07-03/04，已设为默认）**：去掉低频的 `intro/preview/read_raw`（占 opus 调用 0.6%/0/0），opus 3 轮均值 **0.8204** vs 8 工具基线 0.8158（噪声内打平），**token/题稳降 ~15%**（90.3k→77.0k，轮间无重叠）；跨 5 模型单轮复验无一受损（Δ −0.011～+0.035，见 comparsion.md §11）。**5 工具现为代码默认**（`Config.disabled_tools`），实验需恢复 8 工具时设 `DEEPREAD_DISABLED_TOOLS=none`。产物 `runs/abl5*`，驱动 `scripts/run_ablation_5tools*.sh`。
 - **deepseek-v4-flash 的 JSON 不稳**：增强解析端做去围栏、补尾逗号、宽松正则，绝不把 JSON 原文当成 tldr 落库。
 - **`python` vs `python3`**：本机只有 `python3` 在 PATH，后台建库脚本误用 `python` 会静默失败。
 - **评测分片自匹配陷阱**：用 `pgrep -f 'run_eval.py --shard'` 做 watcher 会匹配到 watcher 自身导致永不退出，改用"按输出行数判完成"。
@@ -172,7 +183,7 @@ flowchart LR
 1. **渐进式阅读这条路线在 CAE 上达标**：v3 三轮均值 0.816，反超忠实复现的 agenticRAG（0.814）。
 2. **真正的瓶颈被 94 题小语料掩盖了**：不是"读得细不细"，而是对无标题巨型文档的**检索召回**（chunk-BM25 + 编号小节回退解决）和**作答时把具体事实写全**（compose 事实完整性，一处改动 +0.011）。
 3. **两条独立路线相互印证**：agenticRAG 与 DeepreadQA 都指向"rubric 对齐的简洁、决策、绝不弃答、事实写全的作答，是越过 0.80 的关键一招"。
-4. **局限（诚实）**：① 0.85 是结构性天花板，唯一实质杠杆是图/表 VLM-OCR；② compose 纪律是对这套 v3 rubric 校准的，换评测口径需重调；③ 整套系统目前只在 CAE 单领域、中文上验证过。
+4. **局限（诚实）**：① ~0.83 是本评测口径下的结项高原（四条轴试毕，见 §八）——VLM-OCR 杠杆已执行兑现，0.85 属"超参考答案"区间已弃追；② compose 纪律是对这套 v3 rubric 校准的，换评测口径需重调；③ 整套系统目前只在 CAE 单领域、中文上验证过。
 
 ---
 
@@ -191,6 +202,8 @@ for k in 0 1 2 3 4 5 6 7; do
   python3 run_eval.py --shard $k --num-shards 8 --output runs/s${k}.jsonl &
 done; wait
 cat runs/s[0-7].jsonl > runs/deepreadqa.jsonl
+# 中途被限流/断电？对每个分片加 --resume 断点续跑：已有非空答案的题直接保留，
+# 只重跑空答/缺失的题（rich 轨迹追加不覆盖）。
 
 # 3) 用 v3 rubric 打分（judge=gpt-5.4-mini）
 bash scripts/score.sh runs/deepreadqa.jsonl runs/deepreadqa.eval.json
@@ -198,16 +211,18 @@ python3 -c "import json;print(json.load(open('runs/deepreadqa.eval.json'))['aggr
 ```
 
 **产物清单**
-- `deepread_sdk/`：离线数据层——`structure`（结构恢复）/ `enrich`（deepseek 增强）/ `store`（SQLite）/ `reader`（七视图）/ `tokens` / `build`
-- `deepreadqa/`：在线层——`retrieval`（chunk BM25）/ `tools`（8 工具）/ `prompts`（守则 + 事实完整 compose）/ `harness`（agentic 循环）/ `llm` / `config`
-- `run_eval.py`、`scripts/score.sh`：评测驱动 + cae-rubrics-eval 打分封装
-- `tests/`：98 个单元测试；`docs/review/`：GPT-5.5 多轮代码审查
+- `deepread_sdk/`：离线数据层——`structure`（结构恢复）/ `enrich`（deepseek 增强）/ `store`（SQLite）/ `reader`（七视图）/ `tokens` / `build` / `pagediff`（VLM-OCR 修复的纯函数：段级覆盖率/去重/锚点/标题降级/附录）
+- `deepreadqa/`：在线层——`retrieval`（chunk BM25）/ `tools`（8 工具定义，默认启用 5 个）/ `prompts`（守则 + 事实完整 compose + 审校/补充模板）/ `harness`（agentic 循环）/ `verify`（可选核验回路，默认关）/ `llm` / `config`
+- `run_eval.py`、`scripts/score.sh`：评测驱动（支持 `--resume` 断点续跑）+ cae-rubrics-eval 打分封装；`scripts/vlm_ocr_repair.py`：语料修复跑批（转写缓存 `runs/vlm_ocr_cache/`）；`scripts/run_vlmocr_eval.sh <prefix>`：换库/换开关的三轮评测驱动
+- `store/cae.db`（原始库）与 `store/cae_vlmocr.db`（**生产库**，VLM-OCR 修复后）
+- `tests/`：169 个单元测试；`docs/ALGORITHM.md`：**算法内幕文档（后端对接用）**——完整流程 mermaid、工具逐一规格（参数/输出模板/截断规则）、数据预处理细节（含 §2.6 VLM-OCR 修复管线）、重试与 failover 协议、落地坑清单
 
 ---
 
 ## 十二、后端集成与上线指南（面向接入开发）
 
 > 本节是给后端同学的**接入说明**：DeepreadQA 是一个 **Python 库**（不是现成的 HTTP 服务），后端按下面的方式构造一次、用 `answer()` 逐题问答，自己包一层 API（FastAPI/Flask 等）即可上线。
+> 算法内部机理（主循环/工具规格/预处理/协议细节/并发坑）见 **`docs/ALGORITHM.md`**，接入前请通读其 §9 落地清单。
 
 ### 12.1 交付形态与前置条件
 
@@ -231,8 +246,13 @@ cp .env.example .env               # 填真实 key（.env 已 gitignore，勿提
 | `AIBERM_API_KEY` | **必填**，LLM key | `sk-...` |
 | `DEEPREAD_AGENT_MODEL` | 在线作答模型 | `anthropic/claude-opus-4.8` |
 | `DEEPREAD_ENRICH_MODEL` | 离线建库的章节增强模型 | `deepseek/deepseek-v4-flash` |
-| `DEEPREAD_DB` | 在线读取的库路径（覆盖默认） | `store/cae.db` |
+| `DEEPREAD_DB` | 在线读取的库路径（覆盖默认；**生产推荐 VLM-OCR 修复库**） | `store/cae_vlmocr.db` |
+| `DEEPREAD_VERIFY` | 可选，开启 compose 后核验-修补回路（本评测下中性，默认关；见 comparsion.md §13） | `1` |
 | `DEEPREAD_KB_ROOT` | 知识库源目录（仅建库用） | `/home/juli/CAE-QA/cae-mds` |
+| `DEEPREAD_BACKUP_BASE_URL` | 可选，备用 LLM 端点（主端点重试耗尽时自动切换） | `https://wismodel.example/v1` |
+| `DEEPREAD_BACKUP_API_KEY` | 可选，备用端点 key（与 BASE_URL 同时设置才生效） | `sk-...` |
+| `DEEPREAD_BACKUP_MODEL` | 可选，备用端点模型 | 缺省用 `DEEPREAD_AGENT_MODEL` |
+| `DEEPREAD_DISABLED_TOOLS` | 可选，覆盖默认工具面（默认已禁用 `intro,preview,read_raw`；设 `none` 恢复全部 8 个） | `none` |
 
 > 安全：key 只走环境变量/`.env`，**不要硬编码进代码或镜像**。
 
@@ -305,14 +325,14 @@ def health():                       # 就绪探针：索引已加载即 200
 
 - **单例 + 多进程**：`DeepreadQA` 实例内含**只读** SQLite reader + 内存 BM25 索引，构造一次即可。要并发就**起多个 worker 进程**（如 `uvicorn --workers N`），每进程一个实例。
 - **`answer()` 是阻塞的**：单题内部串行跑多轮 LLM 工具调用，**典型 5–8 轮、十几秒到数十秒**（取决于题难度与端点延迟）。后端请用线程池/异步 worker 承接并发，**别在事件循环里直接 `await` 它**（它是同步函数）。
-- **已知并发注意点**：`total_tokens` 是实例级共享计数，**同一实例并发调用时该数值会相互串扰**（答案本身不受影响）。若要精确计费，**每实例串行**或用"一进程一实例 + 进程级并发"。
+- **计费计数并发安全**：`AgentResult.total_tokens` 按每次 LLM 响应在本次 `answer()` 内部本地累计，**同一实例并发调用互不串扰**，可直接用于单题计费/监控。
 - **超时/重试/限流**：LLM 层每端点 `max_retries_per_endpoint`（默认 2）+ 单次 `request_timeout_s`（默认 180s）。**上线请按你的端点配额压测并设置网关层超时**；端点余额/限流耗尽会让 `answer()` 走强制作答或返回 `error`（见 12.7）。
 - **成本**：作答模型默认 opus-4.8，单题数万 token 量级；如需降本可把 `DEEPREAD_AGENT_MODEL` 换更便宜的模型（注意分数会变，参见 `comparsion.md` 的多模型对比）。
 
 ### 12.7 失败语义与降级
 
 - **绝不弃答**：compose 头被要求"证据零散也给明确答案"，所以 `answer` 正常**非空**。
-- **端点异常**：单题 LLM 彻底失败 → 返回的 `AgentResult.error` 非空、`forced_final=True`，`answer` 可能为空字符串——**后端应对空 `answer` 或非空 `error` 做兜底**（重试该题/返回友好提示）。
+- **端点异常**：配置了 `DEEPREAD_BACKUP_*` 时，主端点重试耗尽（配额/鉴权类错误不重试、立即切换）会自动 failover 到备用端点，进程内粘性生效。所有端点都失败时单题才彻底失败 → 返回的 `AgentResult.error` 非空、`forced_final=True`，`answer` 可能为空字符串——**后端应对空 `answer` 或非空 `error` 做兜底**（重试该题/返回友好提示）。
 - **一题失败不影响其它**：每次 `answer()` 独立，异常被本题吞掉，不会污染进程或其它请求。
 
 ### 12.8 切换模型 / 知识库（无需改代码）
