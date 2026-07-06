@@ -73,7 +73,8 @@ class DeepreadQA:
         self._index = index or SearchIndex(self._reader)
         self._llm = llm or ToolLLM(cfg.endpoint, backups=cfg.backup_endpoints,
                                    request_timeout_s=cfg.request_timeout_s,
-                                   max_retries_per_endpoint=cfg.max_retries_per_endpoint)
+                                   max_retries_per_endpoint=cfg.max_retries_per_endpoint,
+                                   reasoning_effort=cfg.reasoning_effort)
         self._tools = [t for t in TOOL_SCHEMAS
                        if t["function"]["name"] not in set(cfg.disabled_tools)]
 

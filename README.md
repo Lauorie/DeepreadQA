@@ -160,7 +160,7 @@ flowchart LR
 1. **prompt 轴：Pareto 饱和。** v11/v12 证明 completeness 与 anti_hacking 1:1 对冲，往任一侧再推都净负。
 2. **数据轴：VLM-OCR 修复已执行、已兑现。** 8 篇 gold 的源 PDF 逐页转写回填（286 页，`scripts/vlm_ocr_repair.py`），图表/数字硬上限**永久解除**（item23 0.15→0.84~0.94、item45 0.32→0.69~0.81），三种回填布局 0.8185~0.8282，布局间差异已小于判分噪声——这条轴也到底了。
 3. **答案轴：核验-修补回路中性收场。** 重写式 −0.016 有害；"只增不改"式 ≈ 打平——v3 rubric 的负向准则会对"补全"对称扣分（`verify_loop` 默认关，comparsion.md §13）。
-4. **模型轴：平坦。** 六模型 0.77~0.82，模型不是主要变量。
+4. **模型轴：平坦（2026-07-06 控制变量后终版）。** 新库、同预算（8000/6000）、思考档如实标注的多轮均值：opus 0.8185 > kimi-k2.7 0.8100 > glm-5.2 0.7904 > qwen3.6-27b 0.7825 ≈ qwen3.7-max 0.7816 > ds-flash 0.7669 > gemini-flash 0.6693——头部四家挤在 0.78~0.82，**27B 小模型追平自家旗舰**（当初"反超"系旗舰被 2000/1300 预算掐思考 + 单轮噪声，comparsion.md §15）。强拉 `reasoning_effort=high` 无免费午餐（glm/kimi 无感、qwen27 疑似过度思考 −0.035）。
 
 封顶的外部参照：judge 聚合噪声 ±0.04，且**参考答案自身在同一 judge 下仅得 ~0.814**——当前系统（0.8185~0.8282）已超过参考答案；把 mean_score 推到 0.85 意味着比参考答案再高 0.036，其性质是拟合判分器的宽容结构而非知识质量。**故正式把 ~0.83（3 轮均值）定为本评测口径下的结项高原，0.85 目标弃追。**
 
@@ -253,6 +253,9 @@ cp .env.example .env               # 填真实 key（.env 已 gitignore，勿提
 | `DEEPREAD_BACKUP_API_KEY` | 可选，备用端点 key（与 BASE_URL 同时设置才生效） | `sk-...` |
 | `DEEPREAD_BACKUP_MODEL` | 可选，备用端点模型 | 缺省用 `DEEPREAD_AGENT_MODEL` |
 | `DEEPREAD_DISABLED_TOOLS` | 可选，覆盖默认工具面（默认已禁用 `intro,preview,read_raw`；设 `none` 恢复全部 8 个） | `none` |
+| `DEEPREAD_MAX_OUTPUT_TOKENS` | 可选，主循环单次输出上限（**reasoning 模型建议 8000**，否则思考吃掉可见输出） | `8000` |
+| `DEEPREAD_COMPOSE_MAX_TOKENS` | 可选，compose 输出上限（reasoning 模型建议 6000） | `6000` |
+| `DEEPREAD_REASONING_EFFORT` | 可选，pin 思考档位（extra_body 下发，被拒自动降级；仅 glm/kimi/阿里云-qwen 渠道尊重，见 comparsion.md §15） | `high` |
 
 > 安全：key 只走环境变量/`.env`，**不要硬编码进代码或镜像**。
 

@@ -47,6 +47,11 @@ class Config:
     # Off by default until proven by a 3-round eval; enable via DEEPREAD_VERIFY=1.
     verify_loop: bool = False
     verify_max_probes: int = 2
+    # Pinned reasoning effort for cross-model control-variable runs (env:
+    # DEEPREAD_REASONING_EFFORT, e.g. "high"). Empty = provider default.
+    # Sent via extra_body {reasoning_effort, thinking:enabled}; endpoints that
+    # reject it get it auto-disabled (see ToolLLM).
+    reasoning_effort: str = ""
     # Tool names removed from the agent-facing schema list. Default = the
     # ablation-validated production surface (comparsion.md §11: dropping the
     # low-freq trio is lossless across opus + 5 models and saves tokens).
@@ -83,6 +88,14 @@ class Config:
             overrides["disabled_tools"] = (() if raw.lower() in ("", "none") else
                                            tuple(t.strip() for t in raw.split(",")
                                                  if t.strip()))
+        # Reasoning models (qwen3.x thinking / kimi / glm) need >=6000 output
+        # tokens or thinking eats the budget and the visible answer truncates.
+        for field, env in (("max_output_tokens", "DEEPREAD_MAX_OUTPUT_TOKENS"),
+                           ("compose_max_tokens", "DEEPREAD_COMPOSE_MAX_TOKENS")):
+            if field not in overrides and os.environ.get(env):
+                overrides[field] = int(os.environ[env])
+        if "reasoning_effort" not in overrides and os.environ.get("DEEPREAD_REASONING_EFFORT"):
+            overrides["reasoning_effort"] = os.environ["DEEPREAD_REASONING_EFFORT"].strip()
         if "verify_loop" not in overrides and "DEEPREAD_VERIFY" in os.environ:
             overrides["verify_loop"] = (os.environ["DEEPREAD_VERIFY"].strip().lower()
                                         in ("1", "on", "true", "yes"))

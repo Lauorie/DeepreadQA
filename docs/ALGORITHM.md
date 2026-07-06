@@ -567,6 +567,13 @@ PREVIEW {doc_id} [{total_characters} chars (truncated)]    ← 全文≤10000字
 
 `ToolLLM` 维护**有序端点链**：`[primary] + backup_endpoints`。每个端点独立的 OpenAI 兼容客户端（SDK 自带重试关闭，`max_retries=0`，超时 `request_timeout_s`=180s）。
 
+可选的**思考档位 pin**（`reasoning_effort`，来自 `Config`/env）：设定后每个请求经
+`extra_body` 附带 `{"reasoning_effort": <档位>, "thinking": {"type": "enabled"}}`；
+若端点报"reasoning/thinking 不支持/unknown/invalid"则对该端点**永久禁发并原地重试**
+（与 temperature 自动禁发同一模式，不占重试次数）。注意：部分渠道**接受但忽略**该
+参数（实测仅 aiberm-glm/kimi 与阿里云-qwen 尊重档位），横评时须以探针验证为准
+（comparsion.md §15）。
+
 ```mermaid
 flowchart TD
     REQ["chat(messages, tools, …)"] --> EP["取当前 active 端点<br/>（初始 = primary）"]
@@ -608,7 +615,7 @@ flowchart TD
 | `eval_file` | `/home/juli/CAE-QA/data/CAE-eval.json` | 评测集（仅 run_eval 用） | — |
 | `max_iterations` | 15 | 主循环轮数上限 | 调小→更多 forced_final；opus 均值 4.3 轮，余量充足 |
 | `token_threshold` | 128000 | 触发压缩的对话 token 阈值 | 别贴模型上限（估算略低估，见 §4.3） |
-| `max_output_tokens` | 2000 | 主循环/强制作答单次输出上限 | reasoning 型模型（kimi/glm）可能需要 ≥6000，否则思考被截断 |
+| `max_output_tokens` | 2000 | 主循环/强制作答单次输出上限（env: `DEEPREAD_MAX_OUTPUT_TOKENS`） | **reasoning 型模型必设 ≥8000**，否则思考吃掉可见输出（qwen3.7-max 曾因 2000 被压 −0.022） |
 | `request_timeout_s` | 180.0 | 单次 LLM 请求超时 | — |
 | `max_retries_per_endpoint` | 2 | 每端点瞬时错误重试次数 | — |
 | `max_queries_per_search` | 6 | search 一次最多几个查询 | — |
@@ -621,11 +628,12 @@ flowchart TD
 | `concise_compose` | True | 是否启用 compose 头 | **关掉直接用草稿，评测分会掉**（v11 的 +0.011 来自 compose 规则） |
 | `disabled_tools` | `("intro","preview","read_raw")` | 从工具面移除的工具名（env: `DEEPREAD_DISABLED_TOOLS`，逗号分隔；`none`/空 = 全部启用） | schema 列表与执行器同时屏蔽；默认值经跨 6 模型消融验证；禁 `summarize` 会让压缩降级为本地剪枝 |
 | `compose_evidence_token_cap` | 40000 | compose 证据预算 | — |
-| `compose_max_tokens` | 1300 | compose 输出上限 | 答案中位 900 字，余量合理 |
+| `compose_max_tokens` | 1300 | compose 输出上限（env: `DEEPREAD_COMPOSE_MAX_TOKENS`） | 答案中位 900 字；reasoning 模型建议 6000 |
 | `verify_loop` | False | compose 后核验-修补回路（§4.4，env: `DEEPREAD_VERIFY=1`） | 本评测下中性（comparsion.md §13）；负向准则型 rubric 下勿开 |
 | `verify_max_probes` | 2 | 审校建议的补充检索探针条数上限 | — |
+| `reasoning_effort` | `""` | pin 思考档位（env: `DEEPREAD_REASONING_EFFORT`；经 extra_body 下发，被拒自动降级，§6） | 仅部分渠道尊重；强拉 high 无免费午餐（qwen27 单轮 −0.035，comparsion.md §15） |
 
-环境变量装配（`Config.from_env`）：`AIBERM_API_KEY` **必填**（缺失抛 KeyError）；`AIBERM_BASE_URL` 默认 `https://aiberm.com/v1`；`DEEPREAD_AGENT_MODEL` 默认 `anthropic/claude-opus-4.8`（主端点 `omit_temperature` 恒为 True）；`DEEPREAD_DB`/`DEEPREAD_KB_ROOT` 覆盖库路径/语料目录；`DEEPREAD_VERIFY` 开核验回路；`DEEPREAD_BACKUP_*` 见 §6。`.env` 文件由 python-dotenv 加载，**进程环境变量优先于 .env**。
+环境变量装配（`Config.from_env`）：`AIBERM_API_KEY` **必填**（缺失抛 KeyError）；`AIBERM_BASE_URL` 默认 `https://aiberm.com/v1`；`DEEPREAD_AGENT_MODEL` 默认 `anthropic/claude-opus-4.8`（主端点 `omit_temperature` 恒为 True）；`DEEPREAD_DB`/`DEEPREAD_KB_ROOT` 覆盖库路径/语料目录；`DEEPREAD_VERIFY` 开核验回路；`DEEPREAD_MAX_OUTPUT_TOKENS`/`DEEPREAD_COMPOSE_MAX_TOKENS` 放大输出预算（reasoning 模型必设）；`DEEPREAD_REASONING_EFFORT` pin 思考档位；`DEEPREAD_BACKUP_*` 见 §6。`.env` 文件由 python-dotenv 加载，**进程环境变量优先于 .env**。
 
 ---
 
@@ -662,11 +670,11 @@ python3 run_eval.py --output runs/pred.jsonl \
 4. **兜底逻辑**：对 `answer == ""` 或 `error is not None` 做重试/友好提示。系统设计上“绝不弃答”，空答只剩端点链全挂一种来源。
 5. **计费**：直接累加 `AgentResult.total_tokens`（并发安全，见 §4.5）。单题量级数万 token（opus 均值约 8.9 万），先按你们的端点配额压测。
 6. **换知识库**：新语料 → `python3 -m deepread_sdk.build --db store/new.db --kb-root ...`（全库同一 enricher！）→ `DEEPREAD_DB=store/new.db` 起服务。**必须重启进程**——BM25 索引在构造时装载，不感知库文件变更；`.db` 是整体只读工件，滚动发布按“新库文件 + 新进程”走。
-7. **换模型**：`DEEPREAD_AGENT_MODEL` 即换即用，但注意：① 分数会变（六模型横评见 `comparsion.md`：qwen3.7-max 0.789 > glm/ds/kimi ≈0.75 > gemini 0.66）；② reasoning 型模型考虑把 `max_output_tokens` 提到 ≥6000；③ compose prompt 是对 opus 校准的，弱模型答案偏短的问题换 prompt 前先看 comparsion.md §六的行为画像。
+7. **换模型**：`DEEPREAD_AGENT_MODEL` 即换即用，但注意：① 分数会变（控制变量后的多轮均值横评见 `comparsion.md` §15：opus 0.8185 > kimi 0.8100 > glm 0.7904 > qwen3.6-27b 0.7825 ≈ qwen3.7-max 0.7816 > ds-flash 0.7669 > gemini-flash 0.6693）；② **reasoning 型模型必设** `DEEPREAD_MAX_OUTPUT_TOKENS=8000` + `DEEPREAD_COMPOSE_MAX_TOKENS=6000`（qwen3.7-max 曾因默认 2000/1300 被压 −0.022）；③ 不要盲目 `DEEPREAD_REASONING_EFFORT=high`——多数渠道默认已思考，强拉档位无增益甚至负优化；④ compose prompt 是对 opus 校准的，弱模型答案偏短的问题换 prompt 前先看 comparsion.md 的行为画像。
 8. **doc_id 即文件名**：语料文件重命名 = 所有引用/缓存作废；上线后保持文件名稳定。
 9. **工具输出是给模型看的文本，不是给前端的结构化数据**：需要结构化（如引用列表）就解析 `answer` 末尾的 `doc_id / section_name` 标注，或用 rich 轨迹里的 `tool_calls`；不要去正则工具输出。
-10. **已知能力边界**（提前给产品对齐预期）：① 图/表在 PDF→markdown 时丢失，涉图问题（曲线读数、图中参数表）文本上不可答——这是评测 0.85 天花板的根因，解法在数据层加 VLM-OCR，不在线上参数；② 系统仅在中文 CAE 领域 + v3 rubric 上验证过；③ BM25 是词法检索，纯语义改写查询（零词面重叠）召回弱——守则已让模型自己做双语/同义词扩展来补。
+10. **已知能力边界**（提前给产品对齐预期）：① 图/表在 PDF→markdown 时丢失的问题已由 §2.6 的 VLM-OCR 修复管线解决（生产库 `cae_vlmocr.db`）——但**新语料入库时必须重跑该管线**，否则涉图问题回到不可答状态；② 系统仅在中文 CAE 领域 + v3 rubric 上验证过；③ BM25 是词法检索，纯语义改写查询（零词面重叠）召回弱——守则已让模型自己做双语/同义词扩展来补，"问题措辞与原文术语天然错位"的题（如 item 46 类）是残余弱点。
 
 ---
 
-*文档维护：改动 prompts/工具 schema/截断阈值/输出模板时，请同步更新本文对应小节（§4.1、§5、§7），并跑 `pytest -q`（118 个用例覆盖了本文描述的全部输出格式与协议行为）。*
+*文档维护：改动 prompts/工具 schema/截断阈值/输出模板时，请同步更新本文对应小节（§4.1、§5、§7），并跑 `pytest -q`（173 个用例覆盖了本文描述的全部输出格式与协议行为）。*

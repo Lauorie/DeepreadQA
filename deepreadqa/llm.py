@@ -19,6 +19,10 @@ _RATE_LIMIT_TEXT_RE = re.compile(
 _TEMPERATURE_UNSUPPORTED_RE = re.compile(
     r"temperature.*(unsupported|not support|deprecat)"
     r"|(unsupported|not support|deprecat).*temperature", re.IGNORECASE | re.DOTALL)
+_REASONING_UNSUPPORTED_RE = re.compile(
+    r"(reasoning|thinking).*(unsupported|not support|unknown|invalid)"
+    r"|(unsupported|not support|unknown|invalid).*(reasoning|thinking)",
+    re.IGNORECASE | re.DOTALL)
 
 
 class LLMError(Exception):
@@ -55,12 +59,17 @@ class ToolLLM:
 
     def __init__(self, endpoint: Endpoint, *, backups: Sequence[Endpoint] = (),
                  request_timeout_s: float = 180.0,
-                 max_retries_per_endpoint: int = 2) -> None:
+                 max_retries_per_endpoint: int = 2,
+                 reasoning_effort: str = "") -> None:
         self._endpoints: list[Endpoint] = [endpoint, *backups]
         self._clients = [OpenAI(base_url=ep.base_url, api_key=ep.api_key,
                                 timeout=request_timeout_s, max_retries=0)
                          for ep in self._endpoints]
         self._omit_temp = [ep.omit_temperature for ep in self._endpoints]
+        # pinned reasoning effort (control-variable knob for cross-model evals);
+        # sent via extra_body, auto-disabled per endpoint if rejected.
+        self._effort = reasoning_effort
+        self._omit_reasoning = [not reasoning_effort] * len(self._endpoints)
         self._active = 0
         self._max_retries = max_retries_per_endpoint
         self.total_tokens = 0  # process-level counter (per-answer accounting
@@ -100,6 +109,9 @@ class ToolLLM:
                 kwargs["tool_choice"] = tool_choice
             if not self._omit_temp[i]:
                 kwargs["temperature"] = 0.0
+            if not self._omit_reasoning[i]:
+                kwargs["extra_body"] = {"reasoning_effort": self._effort,
+                                        "thinking": {"type": "enabled"}}
             try:
                 resp = client.chat.completions.create(**kwargs)
             except Exception as exc:  # noqa: BLE001
@@ -108,6 +120,11 @@ class ToolLLM:
                         and _TEMPERATURE_UNSUPPORTED_RE.search(str(exc))):
                     self._omit_temp[i] = True
                     logger.warning("disabling temperature for %s", ep.name)
+                    continue  # not counted as an attempt
+                if (not self._omit_reasoning[i]
+                        and _REASONING_UNSUPPORTED_RE.search(str(exc))):
+                    self._omit_reasoning[i] = True
+                    logger.warning("disabling reasoning_effort for %s", ep.name)
                     continue  # not counted as an attempt
                 if not _is_retryable(exc):
                     logger.warning("[%s] non-retryable error: %s", ep.name, exc)

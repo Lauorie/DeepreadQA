@@ -67,6 +67,17 @@ def test_from_env_parses_disabled_tools(monkeypatch):
     assert cfg.disabled_tools == ("intro", "preview", "read_raw")
 
 
+def test_from_env_output_token_knobs(monkeypatch):
+    """Reasoning models (qwen3.x thinking, kimi, glm) need >=6000 output
+    tokens or the hidden thinking budget truncates the visible answer."""
+    monkeypatch.setenv("AIBERM_API_KEY", "sk-test")
+    monkeypatch.setenv("DEEPREAD_MAX_OUTPUT_TOKENS", "8000")
+    monkeypatch.setenv("DEEPREAD_COMPOSE_MAX_TOKENS", "6000")
+    cfg = Config.from_env()
+    assert cfg.max_output_tokens == 8000
+    assert cfg.compose_max_tokens == 6000
+
+
 def test_from_env_backup_model_defaults_to_primary(monkeypatch):
     monkeypatch.setenv("AIBERM_API_KEY", "sk-primary")
     monkeypatch.setenv("DEEPREAD_AGENT_MODEL", "primary/model")

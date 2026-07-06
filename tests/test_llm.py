@@ -125,3 +125,34 @@ def test_temperature_auto_disable_survives_refactor():
     first, second = _ScriptedOpenAI.calls
     assert "temperature" in first[1]
     assert "temperature" not in second[1]
+
+
+def test_reasoning_effort_sent_via_extra_body(_patched):
+    _ScriptedOpenAI.scripts = {"https://a/v1": [_ok_resp()]}
+    _ScriptedOpenAI.calls = []
+    llm = ToolLLM(_ep("a", "https://a/v1"), reasoning_effort="high")
+    llm.chat([{"role": "user", "content": "q"}])
+    _, kwargs = _ScriptedOpenAI.calls[0]
+    assert kwargs["extra_body"] == {"reasoning_effort": "high",
+                                    "thinking": {"type": "enabled"}}
+
+
+def test_reasoning_effort_default_absent(_patched):
+    _ScriptedOpenAI.scripts = {"https://a/v1": [_ok_resp()]}
+    _ScriptedOpenAI.calls = []
+    ToolLLM(_ep("a", "https://a/v1")).chat([{"role": "user", "content": "q"}])
+    _, kwargs = _ScriptedOpenAI.calls[0]
+    assert "extra_body" not in kwargs
+
+
+def test_reasoning_rejected_disables_and_retries(_patched):
+    _ScriptedOpenAI.scripts = {"https://a/v1": [
+        _FakeAPIError("thinking is not supported for this model", 400),
+        _ok_resp("fine"),
+    ]}
+    _ScriptedOpenAI.calls = []
+    llm = ToolLLM(_ep("a", "https://a/v1"), reasoning_effort="high")
+    resp = llm.chat([{"role": "user", "content": "q"}])
+    assert resp.content == "fine"
+    assert "extra_body" in _ScriptedOpenAI.calls[0][1]
+    assert "extra_body" not in _ScriptedOpenAI.calls[1][1]
