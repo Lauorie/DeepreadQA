@@ -24,6 +24,16 @@ CATALOG_PROMPT_TEMPLATE = """
 知识库全库目录（每行：doc_id | title | tldr）。若 search 工具不可用，从下方目录中挑选最相关的 doc_id，用 head/read_section 阅读：
 {catalog}"""
 
+# Appended to the agent system prompt when Config.coverage_discipline is on
+# (env DEEPREAD_COVERAGE=1): kills the two measured full-corpus retrieval-tail
+# modes — "found one named subject, stopped searching" (MultiDoc items
+# 68/90/91) and "re-searching with the same failing words" (v3 item 46).
+COVERAGE_PROMPT_BLOCK = """
+
+覆盖自查（跨文档/多对象题必须执行）：
+- 作答前逐项核对：题目**点名的每一个**研究/方法/对象/软件版本，都必须已检索到对应文档并 read_section 读过其相关章节；缺任何一个都不得开始作答——先补检索。
+- 某对象搜不到时，禁止沿用原词重复搜：**换角度重构查询**——改用其专名全称/缩写、英文对应词、上位概念、应用场景或配套关键字（如 LS-DYNA 的 *KEYWORD 名）；连续两次重构仍无果，才允许基于已有证据作答并在答案中声明该缺口。"""
+
 # Appended to both the agent system prompt and the compose system prompt when
 # Config.answer_lang == "en" (English-gold benchmarks like SyllabusQA/QASPER).
 ANSWER_LANG_EN_LINE = ("\n\nIMPORTANT: Write the final answer in English — "

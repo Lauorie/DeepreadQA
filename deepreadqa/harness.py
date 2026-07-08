@@ -10,14 +10,14 @@ from deepread_sdk import Reader
 from .config import Config
 from .llm import LLMError, ToolLLM
 from .prompts import (ADDENDUM_USER_TEMPLATE, CATALOG_PROMPT_TEMPLATE,
-                      ANSWER_LANG_EN_LINE, COMPOSE_SYSTEM, COMPOSE_USER_TEMPLATE,
+                      ANSWER_LANG_EN_LINE, COMPOSE_SYSTEM, COMPOSE_USER_TEMPLATE, COVERAGE_PROMPT_BLOCK,
                       FORCE_FINAL_PROMPT, FORCE_SUMMARIZE_PROMPT,
                       SYSTEM_PROMPT, VERIFY_SYSTEM, VERIFY_USER_TEMPLATE)
 from .retrieval import SearchIndex
 from .verify import parse_verify, run_probes
 from .tokens import count_messages_tokens
 from deepread_sdk.tokens import truncate_to_tokens
-from .tools import TOOL_SCHEMAS, ToolBox
+from .tools import TOOL_SCHEMAS, ToolBox, resolve_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,8 @@ def _build_system_prompt(cfg: Config, reader: Reader) -> str:
         lines = "\n".join(f"- {d['doc_id']} | {d['title']} | {d['tldr']}"
                           for d in docs)
         prompt = prompt + CATALOG_PROMPT_TEMPLATE.format(catalog=lines)
+    if cfg.coverage_discipline:
+        prompt = prompt + COVERAGE_PROMPT_BLOCK
     if cfg.answer_lang == "en":
         prompt = prompt + ANSWER_LANG_EN_LINE
     return prompt
@@ -147,6 +149,10 @@ class DeepreadQA:
             pending = None
             for tc in resp.tool_calls:
                 name, args = _parse_call(tc)
+                # normalize proxy-mangled names once so the summarize branch,
+                # execution and the trajectory log all see the real tool
+                name = resolve_tool_name(
+                    name, {t["function"]["name"] for t in TOOL_SCHEMAS}) or name
                 if args is None:
                     result = (f"error: arguments for tool {name!r} were not valid "
                               "JSON; re-issue the call with corrected JSON arguments")

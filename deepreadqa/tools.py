@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from deepread_sdk import Reader
 from deepread_sdk.reader import FRONT_MATTER_RE as _FRONTMATTER_RE
@@ -86,6 +87,24 @@ TOOL_SCHEMAS: list[dict] = [
 ]
 
 
+# Some aiberm distributors rewrite tool schema names to
+# Compat<CamelCase><6 hex> (deterministic per tool, 2026-07-08 incident);
+# the model then calls the rewritten names. Resolve them back so a proxy-side
+# rename never bounces every call as "unknown tool".
+_MANGLED_RE = re.compile(r"^Compat([A-Za-z_]+)[0-9a-f]{6}$")
+
+
+def resolve_tool_name(name: str, known) -> str | None:
+    """Map a (possibly proxy-mangled) tool name onto a defined tool, else None."""
+    if name in known:
+        return name
+    m = _MANGLED_RE.match(name)
+    if not m:
+        return None
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", m.group(1)).lower()
+    return snake if snake in known else None
+
+
 class ToolBox:
     def __init__(self, cfg: Config, reader: Reader, index: SearchIndex) -> None:
         self._cfg = cfg
@@ -94,6 +113,13 @@ class ToolBox:
         self.seen_docs: set[str] = set()
 
     def execute(self, name: str, args: dict) -> str:
+        defined = {t["function"]["name"] for t in TOOL_SCHEMAS}
+        resolved = resolve_tool_name(name, defined)
+        if resolved is None:
+            return f"error: unknown tool {name!r}"
+        if resolved != name:
+            logger.info("resolved proxy-mangled tool name %r -> %r", name, resolved)
+        name = resolved
         if name in self._cfg.disabled_tools:
             return f"error: unknown tool {name!r}"
         try:

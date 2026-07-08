@@ -59,6 +59,9 @@ class Config:
     # rejected at startup (explicit ValueError, never silent truncation).
     catalog_in_prompt: bool = False
     catalog_max_docs: int = 400
+    # Appends the coverage-discipline rule block to the agent system prompt
+    # (env DEEPREAD_COVERAGE); experiment flag, default off pending A/B.
+    coverage_discipline: bool = False
     # "en" appends an English-answer instruction to the agent + compose
     # prompts (for English-gold benchmarks); "" keeps prompts untouched.
     answer_lang: str = ""
@@ -123,6 +126,10 @@ class Config:
         # CAE-MultiDoc-eval.json) without touching the default CAE-eval.json.
         if "eval_file" not in overrides and os.environ.get("DEEPREAD_EVAL_FILE"):
             overrides["eval_file"] = os.environ["DEEPREAD_EVAL_FILE"]
+        if "coverage_discipline" not in overrides and "DEEPREAD_COVERAGE" in os.environ:
+            overrides["coverage_discipline"] = (
+                os.environ["DEEPREAD_COVERAGE"].strip().lower()
+                in ("1", "on", "true", "yes"))
         if "answer_lang" not in overrides and os.environ.get("DEEPREAD_ANSWER_LANG"):
             overrides["answer_lang"] = os.environ["DEEPREAD_ANSWER_LANG"].strip().lower()
         return Config(endpoint=ep, **overrides)

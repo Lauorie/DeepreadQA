@@ -243,3 +243,31 @@ def test_read_section_default_skips_front_matter(populated_store):
     box = _box(populated_store)
     out = box.execute("read_section", {"doc_id": "en_paper.md"})
     assert "SECTION en_paper.md :: 1. Introduction" in out
+
+
+# ---- proxy tool-name mangling resolver --------------------------------------
+# 2026-07-08 incident: an aiberm distributor rewrites tool schema names to
+# Compat<CamelCase><6hex> (deterministic per tool); the model then calls the
+# mangled names and every call used to bounce as "unknown tool".
+
+def test_resolve_mangled_names_observed_forms():
+    from deepreadqa.tools import resolve_tool_name
+    known = {"search", "head", "read_section", "grep", "summarize"}
+    assert resolve_tool_name("CompatSearch50e3a5", known) == "search"
+    assert resolve_tool_name("CompatHeadd9384f", known) == "head"
+    assert resolve_tool_name("CompatGrep11fe7e", known) == "grep"
+    assert resolve_tool_name("CompatReadSection0a1b2c", known) == "read_section"
+
+
+def test_resolve_passes_through_clean_and_rejects_unknown():
+    from deepreadqa.tools import resolve_tool_name
+    known = {"search", "head"}
+    assert resolve_tool_name("search", known) == "search"
+    assert resolve_tool_name("CompatNoSuchTool123abc", known) is None
+    assert resolve_tool_name("totally_bogus", known) is None
+
+
+def test_toolbox_executes_mangled_name(populated_store):
+    box = _box(populated_store)
+    out = box.execute("CompatSearch50e3a5", {"queries": ["hydroplaning FSI"]})
+    assert "candidate documents" in out or "No documents matched" in out

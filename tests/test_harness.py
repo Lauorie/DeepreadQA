@@ -375,3 +375,18 @@ def test_answer_lang_en_appends_english_instruction(populated_store):
                        if c and c[0]["role"] == "system"]
     assert compose_systems, "compose stage should have run"
     assert all(ANSWER_LANG_EN_LINE in s for s in compose_systems)
+
+
+def test_coverage_discipline_appends_rule_block(populated_store):
+    from deepreadqa.prompts import COVERAGE_PROMPT_BLOCK
+
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=False, coverage_discipline=True)
+    llm = _MsgRecordingLLM()
+    qa = DeepreadQA(cfg, llm=llm, reader=reader, index=SearchIndex(reader))
+    qa.answer("Q")
+    sp = llm.first_messages[0]["content"]
+    assert sp.startswith(SYSTEM_PROMPT)
+    assert COVERAGE_PROMPT_BLOCK in sp
+    assert "覆盖自查" in COVERAGE_PROMPT_BLOCK

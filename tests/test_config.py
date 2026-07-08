@@ -116,3 +116,13 @@ def test_from_env_answer_lang(monkeypatch) -> None:
     from deepreadqa.config import Config
     cfg = Config.from_env()
     assert cfg.answer_lang == "en"
+
+
+def test_from_env_coverage_flag(monkeypatch) -> None:
+    monkeypatch.setenv("AIBERM_API_KEY", "k")
+    monkeypatch.setenv("DEEPREAD_COVERAGE", "1")
+    from deepreadqa.config import Config
+    cfg = Config.from_env()
+    assert cfg.coverage_discipline is True
+    monkeypatch.delenv("DEEPREAD_COVERAGE")
+    assert Config.from_env().coverage_discipline is False
