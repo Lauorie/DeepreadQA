@@ -4,7 +4,7 @@
 >
 > 与 `README.md` 的分工：README §12 讲**怎么部署怎么调用**（安装、FastAPI 包装、冒烟）；本文讲**内部怎么运转**——你不需要读源码就能按本文实现或排障。
 >
-> 对应代码版本：`main` @ `e7eff28` + 2026-07-03 修复批次（keep_doc_ids 保留、坏 JSON 工具参数显式反馈、token 计费并发安全、重试分类 + 端点 failover、`run_eval --resume`、`intro` 跳过前置内容）+ 2026-07-04 默认工具面变更（**默认禁用 intro/preview/read_raw**，消融验证见 §5）。文中行号仅供参考，以文件内搜索为准。
+> 对应代码版本：`main` @ `e7eff28` + 2026-07-03 修复批次（keep_doc_ids 保留、坏 JSON 工具参数显式反馈、token 计费并发安全、重试分类 + 端点 failover、`run_eval --resume`、`intro` 跳过前置内容）+ 2026-07-04 默认工具面变更（**默认禁用 intro/preview/read_raw**，消融验证见 §5）+ **2026-07-07/08 论文对齐批次**（search 卡片带 `[章节idx] (~¶段落)` 坐标锚点、`read_section` 段落分页 `start_para/end_para`、catalog 注入模式 `DEEPREAD_CATALOG`、英文作答开关 `DEEPREAD_ANSWER_LANG`、评测集覆盖 `DEEPREAD_EVAL_FILE`、enricher 关键词数/预算/超时参数化；战役报告见 `docs/deepread_paper_alignment.md`）。文中行号仅供参考，以文件内搜索为准。
 
 ---
 
@@ -118,7 +118,7 @@ flowchart TD
 
 ### 2.3 LLM 轻量增强（`enrich.py`）
 
-对每篇文档发起 **1 次全局调用 + 每章节 1 次调用**（deepseek-v4-flash，`max_tokens=768`，超时 60s，重试 2 次）：
+对每篇文档发起 **1 次全局调用 + 每章节 1 次调用**（deepseek-v4-flash；`EnrichLLM(max_tokens=768, timeout=60.0)` 均为**构造参数**，重试 2 次）。⚠️ **思考型模型（glm/kimi 等）作 enricher 时必须放大到 ≥4000 tokens / ≥180s**——默认预算会被思考吃光、空回复静默降级为“取正文第一行”的兜底 tldr（§5.2 消融臂曾因此差点作废）。关键词条数由 `Enricher(keyword_count=5)` 模板化（消融结论：15 词在全库尺度是零和，见 deepread_paper_alignment.md §5.2，生产维持 5）：
 
 - **全局**：输入 = `title + "\n" + header + "\n" + 第一节内容`，截到 2048 token（粗略 char*4 截断）。要求返回严格 JSON `{"tldr": "...", "keywords": ["5 个关键词"]}`，用文档语言书写。
 - **章节**：输入 = `节名 + "\n" + 节内容`，截到 1500 token。要求只返回一句话摘要。
@@ -256,6 +256,7 @@ FIGURES 转写文末附录逐页命名小节（`comparsion.md` §12 有三布局
 - **分词 `tokenize_mixed`**：小写后正则 `[a-z0-9]+` 抽拉丁/数字 token；若文本含 CJK 字符，再把 jieba 分词结果全量追加（jieba 对原文切，非小写文本）。查询与文档两侧使用同一函数，保证对称。
 - **BM25**：`rank_bm25.BM25Okapi` 默认参数（k1=1.5, b=0.75, epsilon=0.25）。
 - **打分聚合**：一次查询对全部 units 打分 → 每篇文档取其所有单元的**最大分**作为文档分；得分 >0 的文档按分排序取 top_k。该文档**最佳内容 chunk** 提供 `best section` 提示（章节名/idx）与 snippet（chunk 文本压缩空白后前 400 字符）。
+- **段落锚点（2026-07-07 起）**：切 chunk 时记录各 chunk 在章节内的起始偏移；命中文档的最佳 chunk 经 `paragraphs.paragraph_spans`（空行切分、fence 保护）折算成 1-based 段落序号，随 `SearchHit.para_idx` 返回并显示在卡片上（`~¶` 为**近似值**，chunk 边界可能落在命中词前 1-2 段）。BM25 语料与打分逐字节不变（有 pin 测试）。
 - **多查询合并 `search_many`**：逐查询检索，按 doc_id 去重保留最高分，再整体排序取 top_k（在线配置 top_k = `results_per_query` = 20）。
 - **资源画像**：14659 units @226 篇；分词列表 + chunk 文本常驻内存，约为语料文本体量的数倍。索引**每进程各建一份**（多 worker 部署时叠加计算 5s×N 的启动时间与内存）。
 
@@ -282,6 +283,10 @@ FIGURES 转写文末附录逐页命名小节（`comparsion.md` §12 有三布局
    "function": {"name": "search", "arguments": "{\"queries\": [\"...\"]}"}}]}
 {"role": "tool", "tool_call_id": "call_1", "content": "<工具输出文本，见 §5>"}
 ```
+
+**system prompt 的两个可选追加段**（默认关闭时与旧版逐字节一致，各有 pin 测试）：
+- `DEEPREAD_CATALOG=1`（`catalog_in_prompt`）：末尾追加全库目录（每行 `doc_id | title | tldr`，226 篇 ≈ 20.5k token），供 read-only 消融在禁 search 时按目录选文档；库超 `catalog_max_docs`(400) **启动即 raise**，绝不静默截断。
+- `DEEPREAD_ANSWER_LANG=en`（`answer_lang`）：给 agent 与 compose 两个 system prompt 各追加一行英文作答指令（English-gold 基准用，如 SyllabusQA/QASPER）。
 
 **SYSTEM_PROMPT 的行为约束**（prompts.py，逐条对应评测中修过的失分模式，改动前先读 README §五/§六 的演化史）：
 
@@ -423,10 +428,13 @@ flowchart TD
 Found {N} candidate documents:
 - doc_id: {doc_id}
   title: {title}
-  tldr: {tldr} | best section: {section_name}
+  tldr: {tldr} | best section: [{section_idx}] {section_name} (~¶{para_idx})
   matched snippet: {最佳chunk压缩空白后前400字符}
 ```
-`best section`/`matched snippet` 行仅在有内容 chunk 命中时出现。无命中时返回：
+`best section`/`matched snippet` 仅在有内容 chunk 命中时出现；`[idx]` 与 `(~¶p)` 
+分别在 section_idx / para_idx 可用时出现（缺省时优雅降级为旧样式）。锚点语义：
+agent 可凭它直接 `read_section(idx=…, start_para≈¶)` 跳读，省一次 head 往返；
+`~¶` 是近似值（偏差 ≤1-2 段），不能当精确坐标。无命中时返回：
 ```
 No documents matched. Try different bilingual keywords.
 ```
@@ -457,21 +465,26 @@ sections (name | tokens | tldr):
 
 ### 5.3 `read_section` — 按章读全文（主力阅读工具）
 
-**Schema**：`{"doc_id": string(必填), "section": string(章节名), "idx": integer}`——section/idx 二选一，都给时 **idx 优先**。
+**Schema**：`{"doc_id": string(必填), "section": string(章节名), "idx": integer, "start_para": integer, "end_para": integer}`——section/idx 二选一，都给时 **idx 优先**；`start_para/end_para`（1-based 含端点，2026-07-07 起）用于巨章分页或按 search 卡片的 ¶ 锚点精读。
 
 **实现**：
 - 按 idx：精确匹配 `sections.idx`；
 - 按 name：先小写去空格**精确**匹配，再**子串**匹配（模型抄 best section 提示时容错）；
 - **两者都缺省**：自动跳过前置内容——取 head 目录中第一个 `token_count > 0` 且节名不匹配 `FRONT_MATTER_RE` 的章节（该正则覆盖：library of congress / table of contents / cataloging / bibliograph / references / acknowledg / abstract / 声明 / 摘要 / 目录 / 学位论文 / 致谢）；
-- 内容超 `section_token_cap`(6000) 截断并加尾注。
+- **输出三分支**（段落 = 空行切分、fenced 代码块内不切，`paragraphs.py`）：
+  - **a. 无范围且 ≤cap**：整章原样输出，与旧版**逐字节一致**（pin 测试）；
+  - **b. 无范围且超 cap**：不再 token 级拦腰截断，改为按整段输出 `[¶1]..[¶k]` 逼近 cap，
+    尾注 `...(section has {N} paragraphs, showed ¶{start}–¶{last}; call again with start_para={last+1}, or grep for specifics)`——agent 可续读；
+    唯一例外：单个段落自身超 cap（无空行的 OCR 整篇）仍硬截断并提示 grep；
+  - **c. 给了范围**：输出 ¶start..¶end（每段前有独立行标记 `[¶i]`），越界 clip 到合法区间（start→[1,N]，end→[start,N]），不报错；同样受 cap 约束。
 
-**返回格式**：
+**返回格式**（b/c 分支头部多出段落总数）：
 ```
-SECTION {doc_id} :: {name} ({token_count} tok)
+SECTION {doc_id} :: {name} ({token_count} tok)            ← a 分支
+SECTION {doc_id} :: {name} ({token_count} tok, {N} paras) ← b/c 分支
 tldr: {tldr}
 ---
-{content}
-...(section truncated at token cap; use grep for specifics)   ← 仅截断时
+{content 或 [¶i] 标记段落序列}
 ```
 
 **使用时机**：head 之后读“与问题最相关的完整章节”；grep 命中后回读命中章节取上下文。守则明令禁止只凭 search 卡片/grep 碎片作答。
@@ -612,7 +625,10 @@ flowchart TD
 | `backup_endpoints` | `()` | 备用端点链（§6） | 不配则端点故障=该题失败 |
 | `db_path` | `store/cae.db` | SQLite 库路径（相对 CWD！） | 服务化请传绝对路径或用 `DEEPREAD_DB` |
 | `kb_root` | `/home/juli/CAE-QA/cae-mds` | 语料目录（仅建库用） | — |
-| `eval_file` | `/home/juli/CAE-QA/data/CAE-eval.json` | 评测集（仅 run_eval 用） | — |
+| `eval_file` | `/home/juli/CAE-QA/data/CAE-eval.json` | 评测集（仅 run_eval 用；env: `DEEPREAD_EVAL_FILE`） | 指向 CAE-MultiDoc 等替代基准即可换题库 |
+| `catalog_in_prompt` | False | 全库目录注入 system prompt（env: `DEEPREAD_CATALOG`） | read-only 消融专用；目录 20.5k tok 随每轮计费（+64% token/题）；>catalog_max_docs 启动即 raise |
+| `catalog_max_docs` | 400 | catalog 模式的库大小上限 | — |
+| `answer_lang` | `""` | `en` = 追加英文作答指令（env: `DEEPREAD_ANSWER_LANG`） | English-gold 基准用；默认空串时 prompt 逐字节不变 |
 | `max_iterations` | 15 | 主循环轮数上限 | 调小→更多 forced_final；opus 均值 4.3 轮，余量充足 |
 | `token_threshold` | 128000 | 触发压缩的对话 token 阈值 | 别贴模型上限（估算略低估，见 §4.3） |
 | `max_output_tokens` | 2000 | 主循环/强制作答单次输出上限（env: `DEEPREAD_MAX_OUTPUT_TOKENS`） | **reasoning 型模型必设 ≥8000**，否则思考吃掉可见输出（qwen3.7-max 曾因 2000 被压 −0.022） |
@@ -633,7 +649,7 @@ flowchart TD
 | `verify_max_probes` | 2 | 审校建议的补充检索探针条数上限 | — |
 | `reasoning_effort` | `""` | pin 思考档位（env: `DEEPREAD_REASONING_EFFORT`；经 extra_body 下发，被拒自动降级，§6） | 仅部分渠道尊重；强拉 high 无免费午餐（qwen27 单轮 −0.035，comparsion.md §15） |
 
-环境变量装配（`Config.from_env`）：`AIBERM_API_KEY` **必填**（缺失抛 KeyError）；`AIBERM_BASE_URL` 默认 `https://aiberm.com/v1`；`DEEPREAD_AGENT_MODEL` 默认 `anthropic/claude-opus-4.8`（主端点 `omit_temperature` 恒为 True）；`DEEPREAD_DB`/`DEEPREAD_KB_ROOT` 覆盖库路径/语料目录；`DEEPREAD_VERIFY` 开核验回路；`DEEPREAD_MAX_OUTPUT_TOKENS`/`DEEPREAD_COMPOSE_MAX_TOKENS` 放大输出预算（reasoning 模型必设）；`DEEPREAD_REASONING_EFFORT` pin 思考档位；`DEEPREAD_BACKUP_*` 见 §6。`.env` 文件由 python-dotenv 加载，**进程环境变量优先于 .env**。
+环境变量装配（`Config.from_env`）：`AIBERM_API_KEY` **必填**（缺失抛 KeyError）；`AIBERM_BASE_URL` 默认 `https://aiberm.com/v1`；`DEEPREAD_AGENT_MODEL` 默认 `anthropic/claude-opus-4.8`（主端点 `omit_temperature` 恒为 True）；`DEEPREAD_DB`/`DEEPREAD_KB_ROOT` 覆盖库路径/语料目录；`DEEPREAD_VERIFY` 开核验回路；`DEEPREAD_MAX_OUTPUT_TOKENS`/`DEEPREAD_COMPOSE_MAX_TOKENS` 放大输出预算（reasoning 模型必设）；`DEEPREAD_REASONING_EFFORT` pin 思考档位；`DEEPREAD_CATALOG` 开目录注入；`DEEPREAD_ANSWER_LANG=en` 开英文作答；`DEEPREAD_EVAL_FILE` 指定替代评测集；`DEEPREAD_BACKUP_*` 见 §6。`.env` 文件由 python-dotenv 加载，**进程环境变量优先于 .env**。
 
 ---
 
