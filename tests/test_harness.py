@@ -1,7 +1,10 @@
+import pytest
+
 from deepread_sdk import Reader
 from deepreadqa.config import Config, Endpoint
 from deepreadqa.harness import DeepreadQA
 from deepreadqa.llm import LLMResponse
+from deepreadqa.prompts import SYSTEM_PROMPT
 from deepreadqa.retrieval import SearchIndex
 
 
@@ -280,6 +283,53 @@ def test_disabled_tools_removed_from_llm_schemas(populated_store):
     assert names == {"search", "head", "read_section", "grep", "summarize"}
 
 
+class _MsgRecordingLLM:
+    """Records the first messages list the harness passes to chat."""
+
+    def __init__(self):
+        self.first_messages = None
+
+    def chat(self, messages, *, tools=None, tool_choice="auto", max_tokens=None):
+        if self.first_messages is None:
+            self.first_messages = [dict(m) for m in messages]
+        return LLMResponse("done", [], "stop", 5, raw_message=_Msg([]))
+
+
+def test_system_prompt_byte_identical_when_catalog_off(populated_store):
+    reader = Reader(populated_store)
+    llm = _MsgRecordingLLM()
+    qa = DeepreadQA(_cfg(), llm=llm, reader=reader, index=SearchIndex(reader))
+    qa.answer("Q")
+    assert llm.first_messages[0]["role"] == "system"
+    assert llm.first_messages[0]["content"] == SYSTEM_PROMPT
+
+
+def test_catalog_mode_appends_full_directory(populated_store):
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=False, catalog_in_prompt=True)
+    llm = _MsgRecordingLLM()
+    qa = DeepreadQA(cfg, llm=llm, reader=reader, index=SearchIndex(reader))
+    qa.answer("Q")
+    sp = llm.first_messages[0]["content"]
+    assert sp.startswith(SYSTEM_PROMPT)
+    assert "- en_paper.md | Hydroplaning Simulation Using FSI | stub global tldr" in sp
+    for doc_id in ("nested.md", "no_heading.md", "zh_paper.md"):
+        assert f"- {doc_id} | " in sp
+    # fallback instruction for search-off ablations
+    assert "head/read_section" in sp
+
+
+def test_catalog_mode_raises_when_store_exceeds_max_docs(populated_store):
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=False, catalog_in_prompt=True,
+                 catalog_max_docs=2)  # fixture store has 4 docs
+    with pytest.raises(ValueError, match="catalog"):
+        DeepreadQA(cfg, llm=_MsgRecordingLLM(), reader=reader,
+                   index=SearchIndex(reader))
+
+
 def test_local_prune_clean_and_bounded(populated_store):
     reader = Reader(populated_store)
     qa = DeepreadQA(_cfg(), llm=_FakeLLM(), reader=reader, index=SearchIndex(reader))
@@ -296,3 +346,32 @@ def test_local_prune_clean_and_bounded(populated_store):
     assert pruned[0]["role"] == "system"
     assert any(m["role"] == "user" and "原始问题" in m["content"] for m in pruned)
     assert "evidence chunk" in pruned[-1]["content"]
+
+
+class _AllMsgRecordingLLM:
+    """Records every messages list the harness passes to chat."""
+
+    def __init__(self):
+        self.calls = []
+
+    def chat(self, messages, *, tools=None, tool_choice="auto", max_tokens=None):
+        self.calls.append([dict(m) for m in messages])
+        return LLMResponse("done", [], "stop", 5, raw_message=_Msg([]))
+
+
+def test_answer_lang_en_appends_english_instruction(populated_store):
+    from deepreadqa.prompts import ANSWER_LANG_EN_LINE
+
+    reader = Reader(populated_store)
+    cfg = Config(endpoint=Endpoint("aiberm", "x", "x", "m", True),
+                 concise_compose=True, answer_lang="en")
+    llm = _AllMsgRecordingLLM()
+    qa = DeepreadQA(cfg, llm=llm, reader=reader, index=SearchIndex(reader))
+    qa.answer("Q")
+    agent_system = llm.calls[0][0]["content"]
+    assert agent_system.startswith(SYSTEM_PROMPT)
+    assert ANSWER_LANG_EN_LINE in agent_system
+    compose_systems = [c[0]["content"] for c in llm.calls[1:]
+                       if c and c[0]["role"] == "system"]
+    assert compose_systems, "compose stage should have run"
+    assert all(ANSWER_LANG_EN_LINE in s for s in compose_systems)

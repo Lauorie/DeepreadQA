@@ -9,10 +9,10 @@ from deepread_sdk import Reader
 
 from .config import Config
 from .llm import LLMError, ToolLLM
-from .prompts import (ADDENDUM_USER_TEMPLATE, COMPOSE_SYSTEM,
-                      COMPOSE_USER_TEMPLATE, FORCE_FINAL_PROMPT,
-                      FORCE_SUMMARIZE_PROMPT, SYSTEM_PROMPT, VERIFY_SYSTEM,
-                      VERIFY_USER_TEMPLATE)
+from .prompts import (ADDENDUM_USER_TEMPLATE, CATALOG_PROMPT_TEMPLATE,
+                      ANSWER_LANG_EN_LINE, COMPOSE_SYSTEM, COMPOSE_USER_TEMPLATE,
+                      FORCE_FINAL_PROMPT, FORCE_SUMMARIZE_PROMPT,
+                      SYSTEM_PROMPT, VERIFY_SYSTEM, VERIFY_USER_TEMPLATE)
 from .retrieval import SearchIndex
 from .verify import parse_verify, run_probes
 from .tokens import count_messages_tokens
@@ -65,6 +65,31 @@ def _assistant_msg(resp) -> dict:
                            for tc in resp.tool_calls]}
 
 
+def _build_system_prompt(cfg: Config, reader: Reader) -> str:
+    """SYSTEM_PROMPT, plus the full KB catalog when catalog mode is on.
+
+    With catalog mode off this returns SYSTEM_PROMPT itself, byte-identical.
+
+    Raises:
+        ValueError: When the store holds more docs than cfg.catalog_max_docs
+            (silent truncation of the catalog is not allowed).
+    """
+    prompt = SYSTEM_PROMPT
+    if cfg.catalog_in_prompt:
+        docs = reader.list_docs()
+        if len(docs) > cfg.catalog_max_docs:
+            raise ValueError(
+                f"catalog_in_prompt: store has {len(docs)} docs, exceeding "
+                f"catalog_max_docs={cfg.catalog_max_docs}; refusing to truncate "
+                "the catalog silently")
+        lines = "\n".join(f"- {d['doc_id']} | {d['title']} | {d['tldr']}"
+                          for d in docs)
+        prompt = prompt + CATALOG_PROMPT_TEMPLATE.format(catalog=lines)
+    if cfg.answer_lang == "en":
+        prompt = prompt + ANSWER_LANG_EN_LINE
+    return prompt
+
+
 class DeepreadQA:
     def __init__(self, cfg: Config, *, llm=None, reader: Reader | None = None,
                  index: SearchIndex | None = None) -> None:
@@ -77,13 +102,21 @@ class DeepreadQA:
                                    reasoning_effort=cfg.reasoning_effort)
         self._tools = [t for t in TOOL_SCHEMAS
                        if t["function"]["name"] not in set(cfg.disabled_tools)]
+        # built once at startup so an oversized store fails fast, not mid-run
+        self._system_prompt = _build_system_prompt(cfg, self._reader)
+
+
+    def _compose_system(self) -> str:
+        if self._cfg.answer_lang == "en":
+            return COMPOSE_SYSTEM + ANSWER_LANG_EN_LINE
+        return COMPOSE_SYSTEM
 
     def answer(self, question: str) -> AgentResult:
         cfg = self._cfg
         tally = _Tally()
         box = ToolBox(cfg, self._reader, self._index)
         conversation: list[dict] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": f"问题：{question}"},
         ]
         call_log: list[dict] = []
@@ -233,7 +266,7 @@ class DeepreadQA:
         try:
             resp = self._chat(
                 tally,
-                [{"role": "system", "content": COMPOSE_SYSTEM},
+                [{"role": "system", "content": self._compose_system()},
                  {"role": "user", "content": user}],
                 max_tokens=self._cfg.compose_max_tokens)
             composed = resp.content.strip() or draft
@@ -276,7 +309,7 @@ class DeepreadQA:
         try:
             resp = self._chat(
                 tally,
-                [{"role": "system", "content": COMPOSE_SYSTEM},
+                [{"role": "system", "content": self._compose_system()},
                  {"role": "user", "content": user}],
                 max_tokens=self._cfg.compose_max_tokens)
         except LLMError:

@@ -78,6 +78,20 @@ def test_from_env_output_token_knobs(monkeypatch):
     assert cfg.compose_max_tokens == 6000
 
 
+def test_catalog_defaults_off():
+    cfg = Config(endpoint=Endpoint("aiberm", "u", "k", "m", True))
+    assert cfg.catalog_in_prompt is False
+    assert cfg.catalog_max_docs == 400
+
+
+def test_from_env_catalog_flag(monkeypatch):
+    monkeypatch.setenv("AIBERM_API_KEY", "sk-test")
+    for raw, want in (("1", True), ("on", True), ("true", True), ("yes", True),
+                      ("0", False), ("off", False)):
+        monkeypatch.setenv("DEEPREAD_CATALOG", raw)
+        assert Config.from_env().catalog_in_prompt is want, raw
+
+
 def test_from_env_backup_model_defaults_to_primary(monkeypatch):
     monkeypatch.setenv("AIBERM_API_KEY", "sk-primary")
     monkeypatch.setenv("DEEPREAD_AGENT_MODEL", "primary/model")
@@ -86,3 +100,19 @@ def test_from_env_backup_model_defaults_to_primary(monkeypatch):
     monkeypatch.delenv("DEEPREAD_BACKUP_MODEL", raising=False)
     cfg = Config.from_env()
     assert cfg.backup_endpoints[0].model == "primary/model"
+
+
+def test_from_env_eval_file_override(monkeypatch) -> None:
+    monkeypatch.setenv("AIBERM_API_KEY", "k")
+    monkeypatch.setenv("DEEPREAD_EVAL_FILE", "/tmp/other-eval.json")
+    from deepreadqa.config import Config
+    cfg = Config.from_env()
+    assert cfg.eval_file == "/tmp/other-eval.json"
+
+
+def test_from_env_answer_lang(monkeypatch) -> None:
+    monkeypatch.setenv("AIBERM_API_KEY", "k")
+    monkeypatch.setenv("DEEPREAD_ANSWER_LANG", "en")
+    from deepreadqa.config import Config
+    cfg = Config.from_env()
+    assert cfg.answer_lang == "en"

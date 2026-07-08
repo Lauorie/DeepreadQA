@@ -8,6 +8,7 @@ from deepread_sdk.reader import FRONT_MATTER_RE as _FRONTMATTER_RE
 from deepread_sdk.tokens import count_tokens, truncate_to_tokens
 
 from .config import Config
+from .paragraphs import split_paragraphs
 from .retrieval import SearchIndex
 
 logger = logging.getLogger(__name__)
@@ -31,12 +32,24 @@ TOOL_SCHEMAS: list[dict] = [
             "doc_id": {"type": "string"}}, "required": ["doc_id"]}}},
     {"type": "function", "function": {
         "name": "read_section",
-        "description": "Read one full section by name (from head) or by idx.",
+        "description": "Read one full section by name (from head) or by idx. "
+                       "Optionally page by paragraph via start_para/end_para.",
         "parameters": {"type": "object", "properties": {
             "doc_id": {"type": "string"},
             "section": {"type": "string",
                         "description": "section name from head's TOC; provide this or idx (if both omitted, the first section is read)"},
-            "idx": {"type": "integer", "description": "section index (optional)"}},
+            "idx": {"type": "integer", "description": "section index (optional)"},
+            "start_para": {"type": "integer",
+                           "description": "optional 1-based first paragraph to return "
+                                          "(inclusive). Paragraphs are blank-line separated "
+                                          "blocks; the ¶ numbers shown by search hints and "
+                                          "read_section output use this coordinate system. "
+                                          "Use it to page through huge sections or to read a "
+                                          "precise spot; out-of-range values are clipped."},
+            "end_para": {"type": "integer",
+                         "description": "optional 1-based last paragraph to return "
+                                        "(inclusive, same ¶ coordinates); defaults to the "
+                                        "section's last paragraph, clipped if out of range."}},
             "required": ["doc_id"]}}},
     {"type": "function", "function": {
         "name": "intro",
@@ -107,7 +120,12 @@ class ToolBox:
         lines = [f"Found {len(hits)} candidate documents:"]
         for h in hits:
             self.seen_docs.add(h.doc_id)
-            hint = f" | best section: {h.section_name}" if h.section_name else ""
+            hint = ""
+            if h.section_name:
+                # coordinates for a direct jump: read_section(idx=…, start_para≈¶)
+                idx_part = f"[{h.section_idx}] " if h.section_idx is not None else ""
+                para_part = f" (~¶{h.para_idx})" if h.para_idx is not None else ""
+                hint = f" | best section: {idx_part}{h.section_name}{para_part}"
             card = (f"- doc_id: {h.doc_id}\n  title: {h.title}\n  "
                     f"tldr: {h.tldr}{hint}")
             if getattr(h, "snippet", ""):
@@ -141,11 +159,53 @@ class ToolBox:
         s = self._reader.section(args["doc_id"], name=name, idx=idx)
         self.seen_docs.add(args["doc_id"])
         content = s["content"]
-        if count_tokens(content) > self._cfg.section_token_cap:
-            content = (truncate_to_tokens(content, self._cfg.section_token_cap)
-                       + "\n...(section truncated at token cap; use grep for specifics)")
-        return (f"SECTION {args['doc_id']} :: {s['name']} ({s['token_count']} tok)\n"
-                f"tldr: {s['tldr']}\n---\n{content}")
+        start_para = args.get("start_para")
+        end_para = args.get("end_para")
+        if (start_para is None and end_para is None
+                and count_tokens(content) <= self._cfg.section_token_cap):
+            # no range requested and the section fits: legacy output, unchanged
+            return (f"SECTION {args['doc_id']} :: {s['name']} ({s['token_count']} tok)\n"
+                    f"tldr: {s['tldr']}\n---\n{content}")
+        paras = split_paragraphs(content)
+        total = len(paras)
+        header = (f"SECTION {args['doc_id']} :: {s['name']} "
+                  f"({s['token_count']} tok, {total} paras)\n"
+                  f"tldr: {s['tldr']}\n---\n")
+        if total == 0:
+            return header + content
+        # clip the requested range to [1, total] (paper Algorithm 1 semantics)
+        start = 1 if start_para is None else min(max(1, int(start_para)), total)
+        end = total if end_para is None else min(max(start, int(end_para)), total)
+        body, last, cut = self._render_paras(paras, start, end)
+        if last < end:
+            body += (f"\n...(section has {total} paragraphs, showed ¶{start}–¶{last}; "
+                     f"call again with start_para={last + 1}, or grep for specifics)")
+        elif cut:
+            body += f"\n...(¶{last} truncated at token cap; use grep for specifics)"
+        return header + body
+
+    def _render_paras(self, paras: list[str], start: int,
+                      end: int) -> tuple[str, int, bool]:
+        """Render ``[¶i]``-marked paragraphs start..end under the section token
+        cap. Returns (body, last_rendered_para, last_para_was_cut); a single
+        paragraph exceeding the whole cap is hard-truncated instead of dropped."""
+        cap = self._cfg.section_token_cap
+        blocks: list[str] = []
+        used = 0
+        last = start - 1
+        cut = False
+        for i in range(start, end + 1):
+            block = f"[¶{i}]\n{paras[i - 1]}"
+            t = count_tokens(block)
+            if used + t > cap:
+                if not blocks:
+                    blocks.append(truncate_to_tokens(block, max(cap, 1)))
+                    last, cut = i, True
+                break
+            blocks.append(block)
+            used += t
+            last = i
+        return "\n\n".join(blocks), last, cut
 
     def _t_intro(self, args: dict) -> str:
         self.seen_docs.add(args["doc_id"])

@@ -52,6 +52,16 @@ class Config:
     # Sent via extra_body {reasoning_effort, thinking:enabled}; endpoints that
     # reject it get it auto-disabled (see ToolLLM).
     reasoning_effort: str = ""
+    # Catalog-in-prompt mode (read-only ablation prep): append the full KB
+    # directory (one `- doc_id | title | tldr` line per doc) to the system
+    # prompt so the agent can pick doc_ids without the search tool. Enable
+    # via DEEPREAD_CATALOG=1. Stores larger than catalog_max_docs are
+    # rejected at startup (explicit ValueError, never silent truncation).
+    catalog_in_prompt: bool = False
+    catalog_max_docs: int = 400
+    # "en" appends an English-answer instruction to the agent + compose
+    # prompts (for English-gold benchmarks); "" keeps prompts untouched.
+    answer_lang: str = ""
     # Tool names removed from the agent-facing schema list. Default = the
     # ablation-validated production surface (comparsion.md §11: dropping the
     # low-freq trio is lossless across opus + 5 models and saves tokens).
@@ -99,10 +109,20 @@ class Config:
         if "verify_loop" not in overrides and "DEEPREAD_VERIFY" in os.environ:
             overrides["verify_loop"] = (os.environ["DEEPREAD_VERIFY"].strip().lower()
                                         in ("1", "on", "true", "yes"))
+        if "catalog_in_prompt" not in overrides and "DEEPREAD_CATALOG" in os.environ:
+            overrides["catalog_in_prompt"] = (
+                os.environ["DEEPREAD_CATALOG"].strip().lower()
+                in ("1", "on", "true", "yes"))
         # DEEPREAD_DB lets a run target an alternate store (e.g. a wisdoc-parsed
         # corpus) without touching the default mineru DB. Unset -> default cae.db.
         if "db_path" not in overrides and os.environ.get("DEEPREAD_DB"):
             overrides["db_path"] = os.environ["DEEPREAD_DB"]
         if "kb_root" not in overrides and os.environ.get("DEEPREAD_KB_ROOT"):
             overrides["kb_root"] = os.environ["DEEPREAD_KB_ROOT"]
+        # DEEPREAD_EVAL_FILE points a run at an alternate benchmark (e.g.
+        # CAE-MultiDoc-eval.json) without touching the default CAE-eval.json.
+        if "eval_file" not in overrides and os.environ.get("DEEPREAD_EVAL_FILE"):
+            overrides["eval_file"] = os.environ["DEEPREAD_EVAL_FILE"]
+        if "answer_lang" not in overrides and os.environ.get("DEEPREAD_ANSWER_LANG"):
+            overrides["answer_lang"] = os.environ["DEEPREAD_ANSWER_LANG"].strip().lower()
         return Config(endpoint=ep, **overrides)
