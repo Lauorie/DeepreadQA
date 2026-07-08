@@ -173,3 +173,46 @@ def test_enrich_document_rejects_structured_section_tldr():
     assert g == "global ok"
     assert secs[0] and "```" not in secs[0] and not secs[0].lstrip().startswith("{")
     assert "FSI" in secs[0]
+
+
+# ---- configurable keyword count & client budget -----------------------------
+
+def test_enricher_keyword_count_in_prompt():
+    """keyword_count must appear in the global system prompt sent to the client."""
+    from deepread_sdk.enrich import Enricher
+    from deepread_sdk.schema import RawSection, StructuredDoc
+
+    captured = {}
+
+    class _Client:
+        def complete(self, system, user):
+            captured.setdefault("systems", []).append(system)
+            return '{"tldr": "t", "keywords": ["a"]}'
+
+    doc = StructuredDoc(title="T", header="H",
+                        sections=[RawSection("S", 0, "body", 0, 4)])
+    Enricher(_Client(), keyword_count=12).enrich_document("T", doc, "English")
+    assert any("12 short technical keywords" in s for s in captured["systems"])
+
+
+def test_enricher_default_keyword_count_is_five():
+    from deepread_sdk.enrich import Enricher
+    from deepread_sdk.schema import RawSection, StructuredDoc
+
+    captured = {}
+
+    class _Client:
+        def complete(self, system, user):
+            captured.setdefault("systems", []).append(system)
+            return '{"tldr": "t", "keywords": ["a"]}'
+
+    doc = StructuredDoc(title="T", header="H", sections=[])
+    Enricher(_Client()).enrich_document("T", doc, "English")
+    assert any("5 short technical keywords" in s for s in captured["systems"])
+
+
+def test_enrich_llm_max_tokens_configurable():
+    from deepread_sdk.llm import EnrichLLM
+    llm = EnrichLLM("http://x", "k", "m", max_tokens=4000)
+    assert llm._max_tokens == 4000
+    assert EnrichLLM("http://x", "k", "m")._max_tokens == 768

@@ -10,11 +10,11 @@ from .tokens import count_tokens
 
 logger = logging.getLogger(__name__)
 
-_GLOBAL_SYS = (
+_GLOBAL_SYS_TEMPLATE = (
     "You are a precise academic summarizer. Read the provided paper head and "
     "return STRICT JSON only, no prose, with exactly these keys: "
-    '{"tldr": "<one or two sentence global summary>", '
-    '"keywords": ["<5 short technical keywords>"]}. '
+    '{{"tldr": "<one or two sentence global summary>", '
+    '"keywords": ["<{n} short technical keywords>"]}}. '
     "Write the tldr in the same language as the document."
 )
 _SECTION_SYS = (
@@ -110,10 +110,12 @@ def _fallback_tldr(text: str) -> str:
 
 class Enricher:
     def __init__(self, client, *, global_token_budget: int = 2048,
-                 section_token_budget: int = 1500) -> None:
+                 section_token_budget: int = 1500,
+                 keyword_count: int = 5) -> None:
         self._client = client
         self._gbudget = global_token_budget
         self._sbudget = section_token_budget
+        self._keyword_count = keyword_count
 
     def _safe_complete(self, system: str, user: str) -> str:
         try:
@@ -125,7 +127,7 @@ class Enricher:
     def enrich_document(self, title: str, doc: StructuredDoc,
                         language: str) -> tuple[str, list[str], list[str]]:
         lang_hint = f" The document language is '{language}'; write all summaries in that language."
-        gsys = _GLOBAL_SYS + lang_hint
+        gsys = _GLOBAL_SYS_TEMPLATE.format(n=self._keyword_count) + lang_hint
         ssys = _SECTION_SYS + lang_hint
         head_text = title + "\n" + doc.header + "\n" + (
             doc.sections[0].content if doc.sections else "")

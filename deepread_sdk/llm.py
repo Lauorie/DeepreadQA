@@ -13,10 +13,14 @@ class EnrichLLM:
     """A thin, retrying chat client. `complete` returns assistant text."""
 
     def __init__(self, base_url: str, api_key: str, model: str, *,
-                 timeout: float = 60.0, max_retries: int = 2) -> None:
+                 timeout: float = 60.0, max_retries: int = 2,
+                 max_tokens: int = 768) -> None:
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._model = model
         self._max_retries = max_retries
+        # Reasoning models (glm/kimi) burn budget thinking before the JSON;
+        # 768 silently degrades them to fallback tldrs — raise it for those.
+        self._max_tokens = max_tokens
 
     def complete(self, system: str, user: str) -> str:
         messages = [{"role": "system", "content": system},
@@ -26,7 +30,8 @@ class EnrichLLM:
             try:
                 # No temperature: aiberm rejects it for some models.
                 resp = self._client.chat.completions.create(
-                    model=self._model, messages=messages, max_tokens=768)
+                    model=self._model, messages=messages,
+                    max_tokens=self._max_tokens)
                 return (resp.choices[0].message.content or "").strip()
             except Exception as exc:  # noqa: BLE001 - resilient enrichment
                 last_exc = exc
