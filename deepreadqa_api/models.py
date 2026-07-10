@@ -15,7 +15,10 @@ class AnswerCreateRequest(BaseModel):
         "examples": [{"question": "HJC 本构模型模拟混凝土受冲击时主要考虑哪些效应？"}]})
 
     question: str = Field(min_length=1,
-                          description="面向 CAE 知识库的自然语言问题（中文或英文）")
+                          description="面向知识库的自然语言问题（中文或英文）")
+    collection_id: Optional[str] = Field(
+        default=None,
+        description="私有知识库 id（col_…）；缺省 = 内置 CAE 知识库")
 
 
 class SourceDoc(BaseModel):
@@ -45,6 +48,8 @@ class AnswerResource(BaseModel):
     object: Literal["answer"] = "answer"
     status: AnswerStatus
     question: str
+    collection_id: Optional[str] = Field(
+        default=None, description="作答所用私有知识库；null = 内置 CAE 库")
     answer: Optional[str] = Field(default=None,
                                   description="终答文本；succeeded 时非空")
     sources: list[SourceDoc] = Field(
@@ -97,6 +102,52 @@ class DocumentList(BaseModel):
     offset: int
 
 
+class CollectionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100,
+                      description="知识库显示名（不必唯一）")
+
+
+CollectionStatus = Literal["empty", "ingesting", "ready", "failed"]
+
+
+class CollectionResource(BaseModel):
+    id: str = Field(examples=["col_1a2b3c4d"])
+    object: Literal["collection"] = "collection"
+    name: str
+    created_at: Optional[str] = None
+    document_count: int
+    documents_ready: int
+    documents_processing: int
+    documents_failed: int
+    status: CollectionStatus
+
+
+class CollectionList(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[CollectionResource]
+    total: int
+
+
+class DocumentStatus(BaseModel):
+    doc_id: str
+    status: Literal["processing", "ready", "failed"]
+    error: Optional[str] = None
+    bytes: Optional[int] = None
+    uploaded_at: Optional[str] = None
+    title: Optional[str] = None
+    tldr: Optional[str] = None
+    token_count: Optional[int] = None
+    section_count: Optional[int] = None
+
+
+class DocumentStatusList(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[DocumentStatus]
+    total: int
+
+
 class ServiceInfo(BaseModel):
     service: Literal["deepreadqa-api"] = "deepreadqa-api"
     version: str
@@ -129,7 +180,8 @@ class Problem(BaseModel):
 
 def problem_responses(*statuses: int) -> dict:
     """OpenAPI `responses` entries rendering Problem as problem+json."""
-    descriptions = {401: "认证失败", 404: "资源不存在", 422: "请求校验失败",
+    descriptions = {401: "认证失败", 404: "资源不存在",
+                    409: "知识库尚无可用文档", 422: "请求校验失败",
                     429: "超出速率限制", 502: "上游 LLM 作答失败",
                     503: "服务暂不可用（未就绪或队列已满）"}
     return {s: {"description": descriptions.get(s, "错误"),

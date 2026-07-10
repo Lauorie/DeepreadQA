@@ -23,6 +23,12 @@ class ApiConfig:
     rate_limit_rpm: float = 10.0
     rate_limit_burst: int = 5
     max_question_chars: int = 2000
+    # private collections (caller-uploaded markdown KBs)
+    collections_dir: str = "store/collections"
+    max_upload_bytes: int = 2_000_000
+    max_docs_per_collection: int = 50
+    max_collections_per_key: int = 10
+    ingest_workers: int = 1
 
     def __post_init__(self) -> None:
         if not self.auth_disabled and not self.api_keys:
@@ -30,7 +36,9 @@ class ApiConfig:
                 "no API keys configured: set DEEPREADQA_API_KEYS or explicitly "
                 "opt out of auth with DEEPREADQA_AUTH_DISABLED=1")
         positive = ("workers", "queue_max", "sync_wait_cap_s", "job_ttl_s",
-                    "rate_limit_rpm", "rate_limit_burst", "max_question_chars")
+                    "rate_limit_rpm", "rate_limit_burst", "max_question_chars",
+                    "max_upload_bytes", "max_docs_per_collection",
+                    "max_collections_per_key", "ingest_workers")
         for name in positive:
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -51,7 +59,9 @@ class ApiConfig:
         casts = {"db_path": str, "workers": int, "queue_max": int,
                  "sync_wait_cap_s": float, "job_ttl_s": float,
                  "rate_limit_rpm": float, "rate_limit_burst": int,
-                 "max_question_chars": int}
+                 "max_question_chars": int, "collections_dir": str,
+                 "max_upload_bytes": int, "max_docs_per_collection": int,
+                 "max_collections_per_key": int, "ingest_workers": int}
         env_names = {"db_path": "DEEPREADQA_DB"}  # matches the engine's DEEPREAD_DB
         for f in fields(ApiConfig):
             if f.name in overrides or f.name not in casts:

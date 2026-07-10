@@ -6,12 +6,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 _FINISHED = ("succeeded", "failed")
 
 
-def _iso(ts: Optional[float]) -> Optional[str]:
+def iso_utc(ts: Optional[float]) -> Optional[str]:
     if ts is None:
         return None
     return (datetime.fromtimestamp(ts, tz=timezone.utc)
@@ -34,6 +34,13 @@ class Job:
     forced_final: Optional[bool] = None
     error: Optional[dict] = None
     done: threading.Event = field(default_factory=threading.Event)
+    # private-collection routing: the answers route resolves the collection
+    # bundle at submission time and pins the snapshot here; the worker never
+    # touches the CollectionManager
+    collection_id: Optional[str] = None
+    collection_db: Optional[str] = None
+    collection_index: Any = None
+    collection_titles: Optional[dict[str, str]] = None
 
     def mark_running(self, now: float) -> None:
         self.status = "running"
@@ -64,13 +71,14 @@ class Job:
             "object": "answer",
             "status": self.status,
             "question": self.question,
+            "collection_id": self.collection_id,
             "answer": self.answer,
             "sources": self.sources,
             "usage": self.usage,
             "forced_final": self.forced_final,
-            "created_at": _iso(self.created_at),
-            "started_at": _iso(self.started_at),
-            "finished_at": _iso(self.finished_at),
+            "created_at": iso_utc(self.created_at),
+            "started_at": iso_utc(self.started_at),
+            "finished_at": iso_utc(self.finished_at),
             "latency_ms": latency_ms,
             "error": self.error,
         }

@@ -26,7 +26,7 @@ def _cfg(**over) -> ApiConfig:
 
 def _client(cfg=None, qa=None, engine=None) -> TestClient:
     cfg = cfg or _cfg()
-    engine = engine or AnswerEngine(cfg, qa_factory=lambda: qa or _FakeQA(),
+    engine = engine or AnswerEngine(cfg, qa_factory=lambda *a: qa or _FakeQA(),
                                     catalog=CATALOG)
     app = create_app(cfg, engine=engine)
     return TestClient(app, raise_server_exceptions=False)

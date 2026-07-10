@@ -71,3 +71,28 @@ def test_invalid_values_rejected(field, value):
     kwargs = {"api_keys": ("k",), field: value}
     with pytest.raises(ValueError):
         ApiConfig(**kwargs)
+
+
+def test_collections_defaults(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DEEPREADQA_API_KEYS", "k")
+    cfg = ApiConfig.from_env()
+    assert cfg.collections_dir == "store/collections"
+    assert cfg.max_upload_bytes == 2_000_000
+    assert cfg.max_docs_per_collection == 50
+    assert cfg.max_collections_per_key == 10
+    assert cfg.ingest_workers == 1
+
+
+def test_collections_env_overrides(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DEEPREADQA_API_KEYS", "k")
+    monkeypatch.setenv("DEEPREADQA_COLLECTIONS_DIR", "/tmp/cols")
+    monkeypatch.setenv("DEEPREADQA_MAX_UPLOAD_BYTES", "1000")
+    monkeypatch.setenv("DEEPREADQA_MAX_DOCS_PER_COLLECTION", "5")
+    monkeypatch.setenv("DEEPREADQA_MAX_COLLECTIONS_PER_KEY", "2")
+    monkeypatch.setenv("DEEPREADQA_INGEST_WORKERS", "3")
+    cfg = ApiConfig.from_env()
+    assert (cfg.collections_dir, cfg.max_upload_bytes,
+            cfg.max_docs_per_collection, cfg.max_collections_per_key,
+            cfg.ingest_workers) == ("/tmp/cols", 1000, 5, 2, 3)

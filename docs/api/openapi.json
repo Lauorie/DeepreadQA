@@ -2,12 +2,12 @@
   "openapi": "3.1.0",
   "info": {
     "title": "DeepreadQA API",
-    "description": "基于 **DeepreadQA**（渐进式阅读 AgenticRAG）的 CAE 知识库问答 API。\n\n- 知识库：226 篇 CAE/仿真领域文档（VLM-OCR 修复语料）\n- 作答方式：BM25 检索 + 目录级渐进阅读 + rubric 对齐 compose\n- 认证：`Authorization: Bearer <key>`；错误：RFC 9457 `application/problem+json`\n- 同步/异步双模式：默认同步等待；`Prefer: respond-async` 转异步轮询\n",
+    "description": "基于 **DeepreadQA**（渐进式阅读 AgenticRAG）的 CAE 知识库问答 API。\n\n- 内置知识库：226 篇 CAE/仿真领域文档（VLM-OCR 修复语料）\n- 私有知识库：上传你自己的 markdown（collections），对其问答\n- 作答方式：BM25 检索 + 目录级渐进阅读 + rubric 对齐 compose\n- 认证：`Authorization: Bearer <key>`；错误：RFC 9457 `application/problem+json`\n- 同步/异步双模式：默认同步等待；`Prefer: respond-async` 转异步轮询\n",
     "contact": {
       "name": "DeepreadQA operator",
       "email": "support@atominfinite.ai"
     },
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "paths": {
     "/healthz": {
@@ -155,7 +155,7 @@
           "answers"
         ],
         "summary": "创建一次作答",
-        "description": "对 CAE 知识库提出一个问题。默认同步等待作答完成；请求头 `Prefer: respond-async` 立即返回 202 转异步轮询；`Idempotency-Key` 保证重复提交不重复计费。",
+        "description": "对知识库提出一个问题（缺省 = 内置 CAE 库；带 `collection_id` = 你上传的私有知识库）。默认同步等待作答完成；请求头 `Prefer: respond-async` 立即返回 202 转异步轮询；`Idempotency-Key` 保证重复提交不重复计费。",
         "operationId": "create_answer_v1_answers_post",
         "requestBody": {
           "content": {
@@ -190,6 +190,36 @@
           },
           "401": {
             "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "知识库尚无可用文档",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -302,6 +332,525 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AnswerResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "列出本 key 名下的知识库",
+        "operationId": "list_collections_v1_collections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "创建私有知识库",
+        "operationId": "create_collection_v1_collections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求校验失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/collections/{cid}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "查询知识库状态",
+        "operationId": "get_collection_v1_collections__cid__get",
+        "security": [
+          {
+            "ApiKeyBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "删除知识库（含全部文档，不可恢复）",
+        "operationId": "delete_collection_v1_collections__cid__delete",
+        "security": [
+          {
+            "ApiKeyBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{cid}/documents": {
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "上传 markdown 文档（multipart，可多文件）",
+        "description": "任一文件不合法则整批拒绝（原子）；受理后后台摄取：结构恢复 → LLM 摘要富集 → 建索引。用文档状态端点轮询 processing → ready。",
+        "operationId": "upload_documents_v1_collections__cid__documents_post",
+        "security": [
+          {
+            "ApiKeyBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_documents_v1_collections__cid__documents_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentStatusList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求校验失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "超出速率限制",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "列出知识库文档与摄取状态",
+        "operationId": "list_collection_documents_v1_collections__cid__documents_get",
+        "security": [
+          {
+            "ApiKeyBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentStatusList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "认证失败",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{cid}/documents/{doc_id}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "单个文档的摄取状态与概要",
+        "operationId": "get_collection_document_v1_collections__cid__documents__doc_id__get",
+        "security": [
+          {
+            "ApiKeyBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cid"
+            }
+          },
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Doc Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentStatus"
                 }
               }
             }
@@ -541,7 +1090,19 @@
             "type": "string",
             "minLength": 1,
             "title": "Question",
-            "description": "面向 CAE 知识库的自然语言问题（中文或英文）"
+            "description": "面向知识库的自然语言问题（中文或英文）"
+          },
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id",
+            "description": "私有知识库 id（col_…）；缺省 = 内置 CAE 知识库"
           }
         },
         "additionalProperties": false,
@@ -603,6 +1164,18 @@
           "question": {
             "type": "string",
             "title": "Question"
+          },
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id",
+            "description": "作答所用私有知识库；null = 内置 CAE 库"
           },
           "answer": {
             "anyOf": [
@@ -751,6 +1324,137 @@
         ],
         "title": "AnswerUsage"
       },
+      "Body_upload_documents_v1_collections__cid__documents_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "一个或多个 .md/.markdown 文件"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_upload_documents_v1_collections__cid__documents_post"
+      },
+      "CollectionCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "知识库显示名（不必唯一）"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CollectionCreateRequest"
+      },
+      "CollectionList": {
+        "properties": {
+          "object": {
+            "type": "string",
+            "const": "list",
+            "title": "Object",
+            "default": "list"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionResource"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total"
+        ],
+        "title": "CollectionList"
+      },
+      "CollectionResource": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "examples": [
+              "col_1a2b3c4d"
+            ]
+          },
+          "object": {
+            "type": "string",
+            "const": "collection",
+            "title": "Object",
+            "default": "collection"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "document_count": {
+            "type": "integer",
+            "title": "Document Count"
+          },
+          "documents_ready": {
+            "type": "integer",
+            "title": "Documents Ready"
+          },
+          "documents_processing": {
+            "type": "integer",
+            "title": "Documents Processing"
+          },
+          "documents_failed": {
+            "type": "integer",
+            "title": "Documents Failed"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "empty",
+              "ingesting",
+              "ready",
+              "failed"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "document_count",
+          "documents_ready",
+          "documents_processing",
+          "documents_failed",
+          "status"
+        ],
+        "title": "CollectionResource"
+      },
       "DocumentDetail": {
         "properties": {
           "doc_id": {
@@ -857,6 +1561,133 @@
           "offset"
         ],
         "title": "DocumentList"
+      },
+      "DocumentStatus": {
+        "properties": {
+          "doc_id": {
+            "type": "string",
+            "title": "Doc Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "ready",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "uploaded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploaded At"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "tldr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tldr"
+          },
+          "token_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Count"
+          },
+          "section_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "doc_id",
+          "status"
+        ],
+        "title": "DocumentStatus"
+      },
+      "DocumentStatusList": {
+        "properties": {
+          "object": {
+            "type": "string",
+            "const": "list",
+            "title": "Object",
+            "default": "list"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentStatus"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total"
+        ],
+        "title": "DocumentStatusList"
       },
       "DocumentSummary": {
         "properties": {
@@ -1158,8 +1989,12 @@
       "description": "创建与查询作答（核心能力）"
     },
     {
+      "name": "collections",
+      "description": "私有知识库：上传 markdown 并对其问答"
+    },
+    {
       "name": "documents",
-      "description": "知识库目录（只读，帮助确定可问范围）"
+      "description": "内置知识库目录（只读，帮助确定可问范围）"
     },
     {
       "name": "system",

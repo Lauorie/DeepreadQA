@@ -53,9 +53,11 @@ class AnswerEngine:
 
     Args:
         cfg: API-layer configuration.
-        qa_factory: Called once per worker thread to build its QA instance;
-            defaults to the real DeepreadQA over cfg.db_path. Tests inject
-            fakes here (and a catalog) so no store or LLM is touched.
+        qa_factory: Called as qa_factory(db_path, index) inside worker
+            threads — (None, None) builds the builtin-KB instance (cached
+            per worker), a collection job passes its bundle snapshot.
+            Defaults to the real DeepreadQA; tests inject fakes here (and a
+            catalog) so no store or LLM is touched.
         catalog: Pre-built list of Reader.head()-shaped dicts; required when
             qa_factory is injected, built from the store otherwise.
         metrics: Optional metrics sink with observe_answer(job) hook.
@@ -116,11 +118,15 @@ class AnswerEngine:
         index = SearchIndex(boot)  # built once, shared read-only
         catalog = [boot.head(d["doc_id"]) for d in boot.list_docs()]
 
-        def factory() -> object:
+        def factory(db_path: Optional[str] = None,
+                    index_override: object = None) -> object:
             # Reader (and its sqlite connection) is created inside the
             # worker thread that calls this factory.
-            return DeepreadQA(qa_cfg, reader=Reader(qa_cfg.db_path),
-                              index=index)
+            if db_path is None:
+                return DeepreadQA(qa_cfg, reader=Reader(qa_cfg.db_path),
+                                  index=index)
+            return DeepreadQA(qa_cfg, reader=Reader(db_path),
+                              index=index_override)
 
         return factory, catalog
 
@@ -178,17 +184,24 @@ class AnswerEngine:
     # -- worker ------------------------------------------------------------
 
     def _worker_loop(self) -> None:
-        qa = self._qa_factory()
+        builtin_qa = self._qa_factory(None, None)
         while True:
             job = self._queue.get()
             if job is None:
                 return
             job.mark_running(time.time())
             try:
+                if job.collection_db is not None:
+                    qa = self._qa_factory(job.collection_db,
+                                          job.collection_index)
+                    titles = job.collection_titles or {}
+                else:
+                    qa = builtin_qa
+                    titles = self._titles
                 res = qa.answer(job.question)
                 if res.answer:
                     read = _docs_read(res.tool_calls)
-                    sources = [{"doc_id": d, "title": self._titles.get(d)}
+                    sources = [{"doc_id": d, "title": titles.get(d)}
                                for d in read]
                     usage = {"iterations": res.iterations,
                              "total_tokens": res.total_tokens,

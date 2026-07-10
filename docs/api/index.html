@@ -202,17 +202,18 @@
   <a href="#auth">3 认证</a>
   <a href="#answers">4 同步与异步作答</a>
   <a href="#resource">5 answer 资源</a>
-  <a href="#documents">6 知识库目录</a>
-  <a href="#errors">7 错误模型</a>
-  <a href="#ratelimit">8 速率限制</a>
-  <a href="#retry">9 超时与重试指北</a>
-  <a href="#perf">10 性能与成本</a>
-  <a href="#versioning">11 分页与版本化</a>
-  <a href="#observability">12 可观测性</a>
-  <a href="#deploy">13 部署与配置</a>
-  <a href="#security">14 安全</a>
-  <a href="#faq">15 FAQ</a>
-  <a href="#changelog">16 变更日志</a>
+  <a href="#documents">6 内置知识库目录</a>
+  <a href="#collections">7 私有知识库（上传）</a>
+  <a href="#errors">8 错误模型</a>
+  <a href="#ratelimit">9 速率限制</a>
+  <a href="#retry">10 超时与重试指北</a>
+  <a href="#perf">11 性能与成本</a>
+  <a href="#versioning">12 分页与版本化</a>
+  <a href="#observability">13 可观测性</a>
+  <a href="#deploy">14 部署与配置</a>
+  <a href="#security">15 安全</a>
+  <a href="#faq">16 FAQ</a>
+  <a href="#changelog">17 变更日志</a>
 </nav>
 
 <main>
@@ -223,7 +224,7 @@
     <p>渐进式阅读 AgenticRAG 问答服务：对 226 篇 CAE/仿真知识库提问，系统检索、逐章精读后返回<strong>带真实阅读来源</strong>的答案。本页所有响应示例与性能数字均来自对生产库的真实调用。</p>
   </div>
   <div class="tb-grid">
-    <div class="tb-cell"><span class="k">版本</span><span class="v">1.0.0</span></div>
+    <div class="tb-cell"><span class="k">版本</span><span class="v">1.1.0</span></div>
     <div class="tb-cell"><span class="k">API</span><span class="v">v1</span></div>
     <div class="tb-cell"><span class="k">协议</span><span class="v">OpenAPI 3.1</span></div>
     <div class="tb-cell"><span class="k">作答模型</span><span class="v">opus-4.8</span></div>
@@ -240,6 +241,7 @@
 
 <div class="endpoint"><span class="method post">POST</span><span class="path">/v1/answers</span><div class="desc">创建一次作答：默认同步等待；<code>Prefer: respond-async</code> 立即受理转轮询</div></div>
 <div class="endpoint"><span class="method get">GET</span><span class="path">/v1/answers/{answer_id}</span><div class="desc">查询作答状态与结果（资源保留 1 小时）</div></div>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/collections…</span><div class="desc">私有知识库：上传你自己的 markdown 并对其问答（详见 §7）</div></div>
 <div class="endpoint"><span class="method get">GET</span><span class="path">/v1/documents · /v1/documents/{doc_id}</span><div class="desc">知识库目录：分页列表与单篇章节视图（只读，不含正文）</div></div>
 <div class="endpoint"><span class="method get">GET</span><span class="path">/v1/service · /metrics · /healthz · /readyz</span><div class="desc">服务信息、Prometheus 指标、存活/就绪探针（探针与 /docs、/openapi.json 免认证）</div></div>
 
@@ -308,7 +310,33 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 <p>试用前先看知识库里有什么：<code>GET /v1/documents?limit=50&amp;offset=0</code> 分页列出全部文档（标题 / 语言 / 一句话摘要 / token 数 / 章节数）；<code>GET /v1/documents/{doc_id}</code> 返回单篇章节目录。<strong>不返回正文</strong>——正文只作为作答证据在服务端使用。</p>
 <p>知识库为评测语料原貌：约 8 篇 CAE 金标文档（LS-DYNA 流固耦合、HJC 本构、水下爆炸、含 12.8 万 token 英文教材）+ 218 篇跨领域干扰文档。检索必须在噪声中命中——这正是系统被评测验证过的能力，而非「只放正确答案」的演示盘。</p>
 
-<h2 id="errors"><span class="no">7</span>错误模型</h2>
+
+<h2 id="collections"><span class="no">7</span>私有知识库：上传你自己的 Markdown</h2>
+<p>除内置 CAE 库外，可上传自己的 markdown 形成私有知识库（collection）并对其问答。上传文档经历与内置库<strong>完全相同</strong>的处理：结构恢复（切章）→ LLM 摘要富集（每章 TL;DR + 关键词）→ token 预算 → BM25 索引。</p>
+<pre><code><span class="cm"># ① 建库</span>
+CID=$(curl -sS "$BASE_URL/v1/collections" -H "Authorization: Bearer $DEEPREADQA_API_KEY" \
+  -H "Content-Type: application/json" -d '{"name": "我的项目文档"}' | jq -r .id)
+
+<span class="cm"># ② 上传（multipart，可一次多个 .md）；返回 202，后台摄取</span>
+curl -sS "$BASE_URL/v1/collections/$CID/documents" \
+  -H "Authorization: Bearer $DEEPREADQA_API_KEY" -F "files=@spec.md;type=text/markdown"
+
+<span class="cm"># ③ 轮询该文档 status=ready 后，带 collection_id 问答</span>
+curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"question\": \"沙漏能占比阈值是多少？\", \"collection_id\": \"$CID\"}"</code></pre>
+<div class="tablewrap"><table>
+<tr><th>方法</th><th>路径</th><th>说明</th></tr>
+<tr><td><span class="method post">POST</span></td><td class="mono">/v1/collections</td><td>创建（body <code>{name}</code>）→ 201</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="mono">/v1/collections · /v1/collections/{cid}</td><td>列表 / 状态（empty·ingesting·ready·failed 与计数）</td></tr>
+<tr><td><span class="method post">POST</span></td><td class="mono">/v1/collections/{cid}/documents</td><td>multipart 上传，任一文件不合法<strong>整批拒绝</strong> → 202</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="mono">…/documents · …/documents/{doc_id}</td><td>文档列表 / 单文档摄取状态（ready 后含 title/tldr/token 数）</td></tr>
+<tr><td>DELETE</td><td class="mono">/v1/collections/{cid}</td><td>删除（含全部文档，不可恢复）→ 204</td></tr>
+</table></div>
+<p><code>POST /v1/answers</code> 增加可选字段 <code>collection_id</code>（缺省 = 内置 CAE 库）。约束：<code>.md/.markdown</code>、严格 UTF-8、单文件 ≤ 2 MB；每 key ≤ 10 库、每库 ≤ 50 篇；collection 只对创建它的 key 可见（他人 404）；上传与作答共享限流桶；文档与状态落盘、重启不丢（摄取中断的文档标 failed，重传即可）。</p>
+<div class="callout"><strong>实测（2026-07-10）</strong>：上传 815 字节内部仿真规范 → <strong>15 秒</strong> ready（含真实 LLM 富集）→ 提问阈值类问题 → <strong>29.5 秒 / 9,189 tokens</strong>，答案逐字命中文档独有数值（4.2% / 2.8% / IHQ=4 / QM=0.03），<code>sources</code> 精确指向上传文档——证明作答扎根于上传内容而非模型参数知识。</div>
+
+<h2 id="errors"><span class="no">8</span>错误模型</h2>
 <p>所有非 2xx 响应统一为 <strong>RFC 9457 <code>application/problem+json</code></strong>，永远包含机器可读 <code>code</code> 与用于排障对账的 <code>request_id</code>：</p>
 <pre><code>{
   <span class="str">"type"</span>: <span class="str">"https://deepreadqa.dev/errors/rate-limited"</span>,
@@ -323,6 +351,9 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 <tr><th>code</th><th>HTTP</th><th>场景</th><th>客户端处置</th></tr>
 <tr><td><code>invalid_request</code></td><td><span class="pill s4">422</span></td><td>字段缺失 / 未知字段 / 问题为空或超长（附 <code>errors</code> 定位）</td><td>修正请求，勿重试</td></tr>
 <tr><td><code>unauthorized</code></td><td><span class="pill s4">401</span></td><td>key 缺失或错误</td><td>检查 key，勿重试</td></tr>
+<tr><td><code>upload_rejected</code></td><td><span class="pill s4">422</span></td><td>上传文件不合法：扩展名/大小/编码/重名（detail 指明文件与原因）</td><td>修正后重传</td></tr>
+<tr><td><code>collection_limit</code></td><td><span class="pill s4">422</span></td><td>超出 collection（10/key）或文档（50/库）限额</td><td>删除旧库或联系运营方</td></tr>
+<tr><td><code>collection_not_ready</code></td><td><span class="pill s4">409</span></td><td>对无 ready 文档的知识库提问</td><td>等文档 ready 后重试</td></tr>
 <tr><td><code>not_found</code></td><td><span class="pill s4">404</span></td><td>answer id 不存在或已过 TTL；doc_id / 路径不存在</td><td>勿重试</td></tr>
 <tr><td><code>rate_limited</code></td><td><span class="pill s4">429</span></td><td>超出速率限制（带 <code>Retry-After</code>）</td><td>按 Retry-After 退避重试</td></tr>
 <tr><td><code>queue_full</code></td><td><span class="pill s5">503</span></td><td>作答队列饱和（<code>Retry-After: 30</code>）</td><td>退避重试</td></tr>
@@ -331,10 +362,10 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 <tr><td><code>internal</code></td><td><span class="pill s5">500</span></td><td>未预期异常（不泄漏堆栈）</td><td>带 request_id 联系运营方</td></tr>
 </table></div>
 
-<h2 id="ratelimit"><span class="no">8</span>速率限制</h2>
+<h2 id="ratelimit"><span class="no">9</span>速率限制</h2>
 <p>仅 <code>POST /v1/answers</code> 计费限流：<strong>每 key 令牌桶，默认 10 次/分钟、突发 5</strong>（每次作答消耗真实 LLM 成本）。GET 轮询与目录端点不占作答配额。超限返回 <span class="pill s4">429</span> + <code>Retry-After</code>。需要更高配额请联系运营方（服务端配置项，即时生效）。</p>
 
-<h2 id="retry"><span class="no">9</span>超时与重试指北</h2>
+<h2 id="retry"><span class="no">10</span>超时与重试指北</h2>
 <div class="tablewrap"><table>
 <tr><th>项</th><th>建议值</th><th>理由</th></tr>
 <tr><td>连接超时</td><td class="num">5 s</td><td>常规</td></tr>
@@ -346,7 +377,7 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 </table></div>
 <p>经反向代理部署时同理：<code>proxy_read_timeout ≥ 360s</code>，或统一走异步模式绕开长连接。</p>
 
-<h2 id="perf"><span class="no">10</span>性能与成本（真实测量）</h2>
+<h2 id="perf"><span class="no">11</span>性能与成本（真实测量）</h2>
 <p>2026-07-09 · 生产知识库 · 2 workers · <code>anthropic/claude-opus-4.8</code>，逐条真实请求：</p>
 <div class="statgrid">
   <div class="stat"><div class="v">5.3<small> s</small></div><div class="k">冷启动 → 就绪（建 BM25 索引）</div></div>
@@ -356,7 +387,7 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 </div>
 <p>经验法则：越需要跨文档对比与数值抽取，轮数与耗时越高。吞吐上限 = worker 数（默认 2，可配置）；超出进入队列，队列满即 <span class="pill s5">503</span> 快速失败——宁可显式拒绝，不静默排长队。</p>
 
-<h2 id="versioning"><span class="no">11</span>分页 · 版本化 · 弃用</h2>
+<h2 id="versioning"><span class="no">12</span>分页 · 版本化 · 弃用</h2>
 <ul>
 <li><strong>分页</strong>：<code>limit</code>（1~200，默认 50）/ <code>offset</code>，响应带 <code>total</code>，顺序稳定。</li>
 <li><strong>版本化</strong>：路径版本 <code>/v1</code>；同版本内只做加法，破坏性变更升 <code>/v2</code>。</li>
@@ -364,10 +395,10 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 <li>客户端唯一的向前兼容义务：<strong>容忍未知响应字段</strong>。</li>
 </ul>
 
-<h2 id="observability"><span class="no">12</span>可观测性</h2>
+<h2 id="observability"><span class="no">13</span>可观测性</h2>
 <p>每个响应带 <code>X-Request-ID</code>（可传入自定义值透传）与 <code>X-Response-Time-Ms</code>；排障时提供 request_id 即可对账服务端日志。<code>GET /metrics</code> 输出 Prometheus 文本：请求计数（按方法/路由/状态）、作答终态计数、作答延迟直方图（1~600s 桶）、队列深度。隐私纪律：<strong>访问日志不记录问题与答案正文</strong>。</p>
 
-<h2 id="deploy"><span class="no">13</span>部署与配置</h2>
+<h2 id="deploy"><span class="no">14</span>部署与配置</h2>
 <pre><code><span class="cm"># 安装并启动（Python ≥3.10）</span>
 pip install -e ".[api]"
 export DEEPREADQA_API_KEYS="&lt;key1&gt;,&lt;key2&gt;"
@@ -382,11 +413,12 @@ python3 -m deepreadqa_api --host 0.0.0.0 --port 8000</code></pre>
 <tr><td><code>DEEPREADQA_JOB_TTL_S</code></td><td class="num">3600</td><td>answer 资源保留时长</td></tr>
 <tr><td><code>DEEPREADQA_RATE_LIMIT_RPM / _BURST</code></td><td class="num">10 / 5</td><td>每 key 限流</td></tr>
 <tr><td><code>DEEPREADQA_MAX_QUESTION_CHARS</code></td><td class="num">2000</td><td>问题长度上限</td></tr>
+<tr><td><code>DEEPREADQA_COLLECTIONS_DIR</code> 等</td><td class="num">见手册 §14</td><td>私有知识库目录 / 上传上限 2MB / 限额 50 篇·10 库 / 摄取线程数</td></tr>
 </table></div>
 <p>探针接法：liveness = <code>/healthz</code>，readiness = <code>/readyz</code>（索引加载完成才放流量）。systemd 单元示例见仓库 <code>docs/api/API.md</code> §13。</p>
 <div class="callout warn"><strong>已知边界（设计取舍，非缺陷）</strong>：answer 资源存储在进程内存——重启丢失未取回的结果，多副本需按 key 会话粘滞。这是单实例试用交付的刻意取舍；需要多副本时把 <code>JobStore</code> 换为 Redis 实现即可（接口已隔离）。</div>
 
-<h2 id="security"><span class="no">14</span>安全</h2>
+<h2 id="security"><span class="no">15</span>安全</h2>
 <ul>
 <li>Bearer key 常数时间比较（<code>hmac.compare_digest</code>），无时序侧信道。</li>
 <li>服务对知识库<strong>只读</strong>（SQLite read-only 连接），无任何写入/上传面。</li>
@@ -394,15 +426,16 @@ python3 -m deepreadqa_api --host 0.0.0.0 --port 8000</code></pre>
 <li>服务本身不做 TLS——生产置于反向代理/网关之后；不内置 CORS（服务器间 API）。</li>
 </ul>
 
-<h2 id="faq"><span class="no">15</span>FAQ</h2>
+<h2 id="faq"><span class="no">16</span>FAQ</h2>
 <p><strong>问出知识库范围会怎样？</strong> 检索不到强证据时答案会显式弱化或声明依据不足；<code>sources</code> 为空或不相关即信号。先用 <code>GET /v1/documents</code> 了解范围。</p>
 <p><strong>同一问题两次答案会一样吗？</strong> 不保证逐字一致（LLM 非确定性），但事实内容与来源应稳定。需要字面复现用 <code>Idempotency-Key</code> 取同一资源。</p>
 <p><strong>能流式输出吗？</strong> v1 未提供：作答主要耗时在检索与阅读阶段（无 token 可流），流式收益有限；有强需求会以 /v2 SSE 形式提供。</p>
 <p><strong>中英文都能问吗？</strong> 都可以，系统内部做双语检索（知识库本身中英混合）。</p>
 
-<h2 id="changelog"><span class="no">16</span>变更日志</h2>
+<h2 id="changelog"><span class="no">17</span>变更日志</h2>
 <div class="tablewrap"><table>
 <tr><th>日期</th><th>版本</th><th>变更</th></tr>
+<tr><td class="num">2026-07-10</td><td class="num">1.1.0</td><td>私有知识库（collections）：上传 markdown 建库、摄取状态轮询、<code>collection_id</code> 作答；新错误码 upload_rejected / collection_limit / collection_not_ready</td></tr>
 <tr><td class="num">2026-07-09</td><td class="num">1.0.0</td><td>首个公开版本：同步/异步作答、幂等、限流、RFC 9457 错误模型、目录端点、探针与 Prometheus 指标</td></tr>
 </table></div>
 

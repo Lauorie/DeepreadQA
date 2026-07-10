@@ -59,7 +59,7 @@ class _FakeQA:
 
 
 def _engine(cfg, qa, catalog=CATALOG) -> AnswerEngine:
-    eng = AnswerEngine(cfg, qa_factory=lambda: qa, catalog=catalog)
+    eng = AnswerEngine(cfg, qa_factory=lambda *a: qa, catalog=catalog)
     eng.start()
     assert eng.wait_ready(timeout=5)
     return eng
@@ -108,7 +108,7 @@ def test_empty_answer_fails_with_engine_error():
 
 
 def test_submit_before_ready_raises():
-    eng = AnswerEngine(_cfg(), qa_factory=lambda: _FakeQA(), catalog=CATALOG)
+    eng = AnswerEngine(_cfg(), qa_factory=lambda *a: _FakeQA(), catalog=CATALOG)
     store = JobStore(ttl_s=60)
     job, _ = store.create("q")
     with pytest.raises(NotReadyError):
@@ -145,4 +145,30 @@ def test_catalog_accessors():
     head = eng.catalog_head("hjc.md")
     assert head["keywords"] == ["HJC"]
     assert eng.catalog_head("nope.md") is None
+    eng.shutdown()
+
+
+def test_collection_job_routes_through_factory_with_bundle():
+    calls = []
+
+    def factory(db_path=None, index=None):
+        calls.append((db_path, index))
+        return _FakeQA()
+
+    eng = AnswerEngine(_cfg(), qa_factory=factory, catalog=CATALOG)
+    eng.start()
+    assert eng.wait_ready(timeout=5)
+    store = JobStore(ttl_s=60)
+    job, _ = store.create("上传库里的问题")
+    sentinel = object()
+    job.collection_id = "col_ab"
+    job.collection_db = "/tmp/col_ab.db"
+    job.collection_index = sentinel
+    job.collection_titles = {"hjc.md": "上传的 HJC 文档"}
+    eng.submit(job)
+    assert job.done.wait(timeout=5)
+    assert ("/tmp/col_ab.db", sentinel) in calls
+    # titles resolve from the collection snapshot, not the builtin catalog
+    assert job.sources[0] == {"doc_id": "hjc.md", "title": "上传的 HJC 文档"}
+    assert job.to_resource()["collection_id"] == "col_ab"
     eng.shutdown()

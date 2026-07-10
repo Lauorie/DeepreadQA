@@ -6,3 +6,4 @@ runs/
 .venv/
 *.egg-info/
 .pytest_cache/
+store/collections/

@@ -39,13 +39,33 @@ def _validate(request: Request, payload: AnswerCreateRequest) -> tuple[str, str 
     return question, idem_key
 
 
-def _create_job(request: Request, question: str,
-                idem_key: str | None) -> Job:
+def _resolve_collection(request: Request, api_key: str,
+                        collection_id: str | None) -> tuple | None:
+    """404 for unknown/foreign collections, 409 when nothing is ready yet."""
+    if collection_id is None:
+        return None
+    bundle = request.app.state.collections.bundle(api_key, collection_id)
+    if bundle is None:
+        raise ApiError("not_found", 404,
+                       f"unknown collection: {collection_id!r} (or it "
+                       "belongs to another API key)")
+    if bundle[3] == 0:
+        raise ApiError("collection_not_ready", 409,
+                       "the collection has no ready documents yet; upload "
+                       "markdown files and wait for status=ready")
+    return bundle
+
+
+def _create_job(request: Request, question: str, idem_key: str | None,
+                collection_id: str | None, bundle: tuple | None) -> Job:
     store = request.app.state.job_store
     engine = request.app.state.engine
     job, created = store.create(question, idempotency_key=idem_key)
     if not created:
         return job
+    if bundle is not None:
+        job.collection_id = collection_id
+        job.collection_db, job.collection_index, job.collection_titles, _ = bundle
     try:
         engine.submit(job)
     except NotReadyError as exc:
@@ -67,8 +87,9 @@ def _create_job(request: Request, question: str,
     responses={202: {"model": AnswerResource,
                      "description": "作答仍在执行（异步模式，或同步等待达到上限）；"
                                     "按 Location 轮询"},
-               **problem_responses(401, 422, 429, 502, 503)},
-    description="对 CAE 知识库提出一个问题。默认同步等待作答完成；"
+               **problem_responses(401, 404, 409, 422, 429, 502, 503)},
+    description="对知识库提出一个问题（缺省 = 内置 CAE 库；带 `collection_id` "
+                "= 你上传的私有知识库）。默认同步等待作答完成；"
                 "请求头 `Prefer: respond-async` 立即返回 202 转异步轮询；"
                 "`Idempotency-Key` 保证重复提交不重复计费。")
 async def create_answer(payload: AnswerCreateRequest, request: Request,
@@ -85,7 +106,9 @@ async def create_answer(payload: AnswerCreateRequest, request: Request,
                        headers={"Retry-After": str(seconds)},
                        extra={"retry_after": seconds})
 
-    job = _create_job(request, question, idem_key)
+    bundle = _resolve_collection(request, api_key, payload.collection_id)
+    job = _create_job(request, question, idem_key, payload.collection_id,
+                      bundle)
 
     if "respond-async" in request.headers.get("Prefer", ""):
         if not job.done.is_set():
