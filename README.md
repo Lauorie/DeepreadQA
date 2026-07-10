@@ -360,3 +360,19 @@ print('OK len=',len(r.answer),'iters=',r.iterations,'err=',r.error)
 "
 # 2) 跑单元测试：pytest -q
 ```
+
+## 十三、HTTP API 服务（对外交付）
+
+`deepreadqa_api/` 把上述引擎包装为生产级 FastAPI 服务：同步/异步双模式作答、Bearer 认证、每 key 限流、`Idempotency-Key` 幂等、RFC 9457 problem+json 错误模型、知识库目录端点、健康/就绪探针与 Prometheus 指标。
+
+```bash
+pip install -e ".[api]"
+export DEEPREADQA_API_KEYS="<key>"
+python3 -m deepreadqa_api --port 8000     # 生产库 store/cae_vlmocr.db，约 5s 就绪
+```
+
+- **在线文档页**：`http://8.216.129.125:8000/`（服务自托管，`docs/api/index.html`）
+- **完整手册**：[`docs/api/API.md`](docs/api/API.md)（端点参考、错误码表、重试指北、部署、真实性能测量）
+- **机读契约**：[`docs/api/openapi.json`](docs/api/openapi.json)（`scripts/export_openapi.py` 再生）· 在线 Swagger：`GET /docs`
+- **客户端示例**：[`examples/ask.sh`](examples/ask.sh)、[`examples/client.py`](examples/client.py)（异步轮询 + 退避 + 幂等重试模板）
+- 测试：`tests/test_api_*.py` 48 项（认证/校验/同步/异步/幂等/限流/队列满/错误模型/探针/目录）

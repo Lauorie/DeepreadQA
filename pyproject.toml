@@ -17,9 +17,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+api = ["fastapi>=0.110", "uvicorn>=0.30"]
 
 [tool.setuptools]
-packages = ["deepread_sdk", "deepreadqa"]
+packages = ["deepread_sdk", "deepreadqa", "deepreadqa_api",
+            "deepreadqa_api.routes"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

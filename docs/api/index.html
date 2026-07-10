@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepreadQA API 文档</title>
+<style>
+  :root {
+    --paper: #F5F7F9; --surface: #FFFFFF; --ink: #17232D; --muted: #5A6B7A;
+    --line: #D9E1E8; --line-soft: #E6ECF1; --accent: #0B7285; --accent-soft: #E0F0F2;
+    --code-bg: #10202B; --code-ink: #D7E5EE; --code-line: #1D3242;
+    --ok: #2F855A; --ok-bg: #E3F2EA; --warn: #96690F; --warn-bg: #F7EDD8;
+    --bad: #B03030; --bad-bg: #F8E5E5;
+    --shadow: 0 1px 2px rgba(23,35,45,.05), 0 4px 14px rgba(23,35,45,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0D141B; --surface: #141F29; --ink: #DEE8F0; --muted: #8DA2B3;
+      --line: #263544; --line-soft: #1D2B38; --accent: #3FC2D2; --accent-soft: #10333B;
+      --code-bg: #0A1219; --code-ink: #C9DAE6; --code-line: #1B2B39;
+      --ok: #5CBB8A; --ok-bg: #12301F; --warn: #D9A94A; --warn-bg: #33270D;
+      --bad: #E08787; --bad-bg: #391616;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #F5F7F9; --surface: #FFFFFF; --ink: #17232D; --muted: #5A6B7A;
+    --line: #D9E1E8; --line-soft: #E6ECF1; --accent: #0B7285; --accent-soft: #E0F0F2;
+    --code-bg: #10202B; --code-ink: #D7E5EE; --code-line: #1D3242;
+    --ok: #2F855A; --ok-bg: #E3F2EA; --warn: #96690F; --warn-bg: #F7EDD8;
+    --bad: #B03030; --bad-bg: #F8E5E5;
+    --shadow: 0 1px 2px rgba(23,35,45,.05), 0 4px 14px rgba(23,35,45,.05);
+  }
+  :root[data-theme="dark"] {
+    --paper: #0D141B; --surface: #141F29; --ink: #DEE8F0; --muted: #8DA2B3;
+    --line: #263544; --line-soft: #1D2B38; --accent: #3FC2D2; --accent-soft: #10333B;
+    --code-bg: #0A1219; --code-ink: #C9DAE6; --code-line: #1B2B39;
+    --ok: #5CBB8A; --ok-bg: #12301F; --warn: #D9A94A; --warn-bg: #33270D;
+    --bad: #E08787; --bad-bg: #391616;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.75 -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre, .mono {
+    font-family: ui-monospace, "SF Mono", "JetBrains Mono", Consolas,
+                 "Liberation Mono", monospace;
+  }
+
+  .wrap { display: flex; max-width: 1180px; margin: 0 auto; gap: 40px; padding: 0 24px; }
+  nav.toc {
+    width: 216px; flex: none; position: sticky; top: 0; align-self: flex-start;
+    max-height: 100vh; overflow-y: auto; padding: 32px 0 48px;
+    font-size: 13px;
+  }
+  nav.toc .toc-label {
+    text-transform: uppercase; letter-spacing: .14em; font-size: 11px;
+    color: var(--muted); margin: 0 0 10px 12px;
+  }
+  nav.toc a {
+    display: block; color: var(--muted); text-decoration: none;
+    padding: 4px 12px; border-left: 2px solid transparent;
+    font-variant-numeric: tabular-nums;
+  }
+  nav.toc a:hover { color: var(--ink); }
+  nav.toc a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+  main { flex: 1; min-width: 0; padding: 32px 0 96px; max-width: 74ch; }
+
+  /* ── 工程图签 header ── */
+  header.titleblock {
+    border: 1.5px solid var(--ink); background: var(--surface);
+    margin: 8px 0 40px; box-shadow: var(--shadow);
+  }
+  .tb-top { padding: 26px 28px 20px; border-bottom: 1.5px solid var(--ink); }
+  .tb-eyebrow {
+    font-size: 11px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin: 0 0 6px;
+  }
+  .tb-top h1 { margin: 0; font-size: 30px; line-height: 1.25; letter-spacing: -.01em; text-wrap: balance; }
+  .tb-top p { margin: 10px 0 0; color: var(--muted); max-width: 60ch; }
+  .tb-grid { display: grid; grid-template-columns: repeat(6, 1fr); }
+  .tb-cell { padding: 10px 14px 12px; border-right: 1px solid var(--line); }
+  .tb-cell:last-child { border-right: 0; }
+  .tb-cell .k {
+    display: block; font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .tb-cell .v { font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  @media (max-width: 900px) {
+    .wrap { flex-direction: column; gap: 0; }
+    nav.toc { position: static; width: 100%; max-height: none; padding-bottom: 8px; }
+    .tb-grid { grid-template-columns: repeat(3, 1fr); }
+    .tb-cell:nth-child(3n) { border-right: 0; }
+    .tb-cell { border-top: 1px solid var(--line); }
+  }
+
+  h2 {
+    font-size: 21px; margin: 56px 0 14px; padding-top: 18px;
+    border-top: 1px solid var(--line); letter-spacing: -.01em; text-wrap: balance;
+  }
+  h2 .no { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 10px; }
+  h3 { font-size: 16px; margin: 28px 0 8px; }
+  p { margin: 10px 0; }
+  a { color: var(--accent); }
+  strong { font-weight: 650; }
+  ul { padding-left: 22px; margin: 10px 0; }
+  li { margin: 4px 0; }
+
+  .callout {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    background: var(--surface); padding: 12px 16px; margin: 16px 0;
+    border-radius: 0 6px 6px 0; font-size: 14px;
+  }
+  .callout.warn { border-left-color: var(--warn); }
+
+  pre {
+    background: var(--code-bg); color: var(--code-ink);
+    border: 1px solid var(--code-line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.65;
+    position: relative; margin: 14px 0;
+  }
+  pre .cm { color: #6E8CA0; }
+  pre .str { color: #9FD3A8; }
+  pre .kw { color: #7FC8E8; }
+  code:not(pre code) {
+    background: var(--accent-soft); color: var(--ink);
+    padding: 1px 6px; border-radius: 4px; font-size: 13px;
+  }
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px; border: 1px solid var(--code-line);
+    background: transparent; color: #8FA9BC; font-size: 11px; padding: 3px 10px;
+    border-radius: 5px; cursor: pointer; font-family: inherit;
+  }
+  .copy-btn:hover, .copy-btn:focus-visible { color: #fff; border-color: #4A6B82; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; margin: 14px 0; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); padding: 9px 14px; border-bottom: 1.5px solid var(--line);
+    white-space: nowrap;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, .num { font-variant-numeric: tabular-nums; }
+  td code { white-space: nowrap; }
+
+  .pill {
+    display: inline-block; font-size: 11.5px; font-weight: 700; padding: 1px 9px;
+    border-radius: 99px; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .pill.s2 { color: var(--ok); background: var(--ok-bg); }
+  .pill.s4 { color: var(--warn); background: var(--warn-bg); }
+  .pill.s5 { color: var(--bad); background: var(--bad-bg); }
+
+  .method {
+    display: inline-block; font-family: ui-monospace, monospace; font-size: 12px;
+    font-weight: 700; padding: 2px 8px; border-radius: 5px; margin-right: 8px;
+  }
+  .method.get { color: var(--ok); background: var(--ok-bg); }
+  .method.post { color: var(--accent); background: var(--accent-soft); }
+  .endpoint {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 16px; margin: 10px 0; box-shadow: var(--shadow);
+  }
+  .endpoint .path { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 600; }
+  .endpoint .desc { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+
+  .statgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; }
+  @media (max-width: 720px) { .statgrid { grid-template-columns: repeat(2, 1fr); } }
+  .stat {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .stat .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .stat .v small { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .stat .k { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .flow {
+    font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--muted);
+    background: var(--surface); border: 1px dashed var(--line); border-radius: 8px;
+    padding: 12px 16px; overflow-x: auto; white-space: pre;
+  }
+  footer { margin-top: 72px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<nav class="toc" aria-label="目录">
+  <p class="toc-label">DeepreadQA API</p>
+  <a href="#overview">1 概览</a>
+  <a href="#quickstart">2 快速开始</a>
+  <a href="#auth">3 认证</a>
+  <a href="#answers">4 同步与异步作答</a>
+  <a href="#resource">5 answer 资源</a>
+  <a href="#documents">6 知识库目录</a>
+  <a href="#errors">7 错误模型</a>
+  <a href="#ratelimit">8 速率限制</a>
+  <a href="#retry">9 超时与重试指北</a>
+  <a href="#perf">10 性能与成本</a>
+  <a href="#versioning">11 分页与版本化</a>
+  <a href="#observability">12 可观测性</a>
+  <a href="#deploy">13 部署与配置</a>
+  <a href="#security">14 安全</a>
+  <a href="#faq">15 FAQ</a>
+  <a href="#changelog">16 变更日志</a>
+</nav>
+
+<main>
+<header class="titleblock">
+  <div class="tb-top">
+    <p class="tb-eyebrow">API Reference · Production</p>
+    <h1>DeepreadQA API</h1>
+    <p>渐进式阅读 AgenticRAG 问答服务：对 226 篇 CAE/仿真知识库提问，系统检索、逐章精读后返回<strong>带真实阅读来源</strong>的答案。本页所有响应示例与性能数字均来自对生产库的真实调用。</p>
+  </div>
+  <div class="tb-grid">
+    <div class="tb-cell"><span class="k">版本</span><span class="v">1.0.0</span></div>
+    <div class="tb-cell"><span class="k">API</span><span class="v">v1</span></div>
+    <div class="tb-cell"><span class="k">协议</span><span class="v">OpenAPI 3.1</span></div>
+    <div class="tb-cell"><span class="k">作答模型</span><span class="v">opus-4.8</span></div>
+    <div class="tb-cell"><span class="k">知识库</span><span class="v">226 docs</span></div>
+    <div class="tb-cell"><span class="k">评测均分</span><span class="v">~0.82 <small>v3</small></span></div>
+  </div>
+</header>
+
+<h2 id="overview"><span class="no">1</span>概览</h2>
+<p>一次作答是一个<strong>长任务</strong>（典型 40~120 秒）：agent 先用双语 BM25 检索候选文档，再查目录（每章 TL;DR 与 token 预算）、按章精读、必要时 grep 数值，证据充分后按 rubric 纪律写出终答。官方评测（94 题开放问答，v3 校准 rubric，三轮均值）得分 <strong>~0.82</strong>，超过同口径复现的 Microsoft AgenticRAG（0.814）。</p>
+<div class="flow">POST /v1/answers ─▶ 认证 ─▶ 限流 ─▶ 幂等去重 ─▶ 作答队列 ─▶ worker（agent 循环）─▶ answer 资源
+                                                          ▲
+                       GET /v1/answers/{id} 轮询 ──────────┘</div>
+
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/answers</span><div class="desc">创建一次作答：默认同步等待；<code>Prefer: respond-async</code> 立即受理转轮询</div></div>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/answers/{answer_id}</span><div class="desc">查询作答状态与结果（资源保留 1 小时）</div></div>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/documents · /v1/documents/{doc_id}</span><div class="desc">知识库目录：分页列表与单篇章节视图（只读，不含正文）</div></div>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/service · /metrics · /healthz · /readyz</span><div class="desc">服务信息、Prometheus 指标、存活/就绪探针（探针与 /docs、/openapi.json 免认证）</div></div>
+
+<h2 id="quickstart"><span class="no">2</span>快速开始</h2>
+<div class="callout"><strong>试用环境已就绪</strong>：Base URL <code>http://8.216.129.125:8000</code>，本页即由该服务托管。试用 key 由运营方私下发放（本页面公开可读，故不印 key）；限流 10 次/分钟，可随时轮换。试用期为 HTTP 明文，请勿在问题中携带敏感信息。</div>
+<p>一条 curl 拿到答案（同步模式，客户端读超时务必 ≥ 360s）：</p>
+<pre><code>export BASE_URL="http://8.216.129.125:8000"
+export DEEPREADQA_API_KEY="&lt;运营方发放的试用 key&gt;"
+
+curl -sS -m 360 "$BASE_URL/v1/answers" \
+  -H "Authorization: Bearer $DEEPREADQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "HJC 本构模型模拟混凝土受冲击时主要考虑哪些效应？"}'</code></pre>
+<p>可直接运行的集成模板：仓库内 <code>examples/ask.sh</code>（curl）与 <code>examples/client.py</code>（httpx，异步轮询 + 指数退避 + 幂等重试，推荐）。交互式调试打开 <code>GET /docs</code>（Swagger UI）。</p>
+
+<h2 id="auth"><span class="no">3</span>认证</h2>
+<p>所有 <code>/v1/*</code> 与 <code>/metrics</code> 端点要求 <code>Authorization: Bearer &lt;key&gt;</code>。key 由运营方带外签发（<code>drqa_live_</code> 前缀，42 字符），服务端常数时间比较。缺失或错误返回 <span class="pill s4">401</span> + <code>WWW-Authenticate: Bearer</code>。key 不会出现在任何日志与响应中；泄露请立即联系运营方轮换。</p>
+
+<h2 id="answers"><span class="no">4</span>同步与异步作答</h2>
+<h3>4.1 同步（默认）</h3>
+<p>服务端等待完成后返回 <span class="pill s2">200</span> + 完整资源。若超过同步等待上限（默认 300s，作答继续在后台执行），返回 <span class="pill s2">202</span> + <code>Location</code> 头，客户端转轮询——<strong>同步客户端也必须处理 202</strong>，这是长任务 API 的正常边界而非错误。</p>
+<h3>4.2 异步（推荐用于集成）</h3>
+<p>加请求头 <code>Prefer: respond-async</code>（RFC 7240），立即得到 <span class="pill s2">202</span>：</p>
+<pre><code>HTTP/1.1 202 Accepted
+Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
+<p>轮询 <code>GET {Location}</code> 直至终态。<strong>轮询纪律</strong>：起始 5s，×1.5 指数退避，封顶 30s。</p>
+<h3>4.3 幂等性</h3>
+<p>请求头 <code>Idempotency-Key</code>（≤128 字符）：同 key 重复 POST 返回<strong>同一个资源，不重复执行、不重复计费</strong>。网络超时重试务必复用同一 key。</p>
+<h3>4.4 状态机</h3>
+<div class="flow">queued ─▶ running ─▶ succeeded
+                └────▶ failed        （终态资源保留 1h 后 404）</div>
+<p>请求体约束：<code>question</code> 必填，去空白后 1~2000 字符；<strong>未知字段一律 422 拒绝</strong>（防拼写错误静默失效）。</p>
+
+<h2 id="resource"><span class="no">5</span>answer 资源</h2>
+<p>POST 与 GET 返回同一形状。以下为 2026-07-09 的真实响应（未删改）：</p>
+<pre><code>{
+  <span class="str">"id"</span>: <span class="str">"ans_b334abda0a151fb4"</span>,
+  <span class="str">"object"</span>: <span class="str">"answer"</span>,
+  <span class="str">"status"</span>: <span class="str">"succeeded"</span>,
+  <span class="str">"question"</span>: <span class="str">"在 LS-DYNA 中模拟水下爆炸对混凝土重力坝的破坏，常用哪些流固耦合方法？…"</span>,
+  <span class="str">"answer"</span>: <span class="str">"…最常用且实际采用的是 **ALE 多物质流固耦合（全耦合）方法**…（约 1000 字）"</span>,
+  <span class="str">"sources"</span>: [
+    {<span class="str">"doc_id"</span>: <span class="str">"ALE AND FLUID-STRUCTURE INTERACTION IN LS-DYNA.md"</span>, <span class="str">"title"</span>: <span class="str">"ALE and Fluid-Structure Interaction in LS-DYNA"</span>},
+    {<span class="str">"doc_id"</span>: <span class="str">"水下爆炸冲击荷载作用下混凝土重力坝的破坏模式.md"</span>, <span class="str">"title"</span>: <span class="str">"水下爆炸冲击荷载作用下混凝土重力坝的破坏模式"</span>}
+  ],
+  <span class="str">"usage"</span>: {<span class="str">"iterations"</span>: 7, <span class="str">"total_tokens"</span>: 168572, <span class="str">"compactions"</span>: 0,
+            <span class="str">"documents_read"</span>: 4, <span class="str">"documents_seen"</span>: 20},
+  <span class="str">"forced_final"</span>: false,
+  <span class="str">"created_at"</span>: <span class="str">"2026-07-09T09:01:08.352Z"</span>,
+  <span class="str">"latency_ms"</span>: 106166,
+  <span class="str">"error"</span>: null
+}</code></pre>
+<div class="tablewrap"><table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>status</code></td><td>enum</td><td><code>queued / running / succeeded / failed</code></td></tr>
+<tr><td><code>answer</code></td><td>string | null</td><td>终答（Markdown）；仅 succeeded 非空</td></tr>
+<tr><td><code>sources</code></td><td>array</td><td><strong>实际打开阅读过</strong>的文档——仅在检索列表出现的候选不计入，引用是诚实的</td></tr>
+<tr><td><code>usage</code></td><td>object</td><td>迭代轮数（上限 15）、token 总消耗、记忆压缩次数、精读/候选文档数</td></tr>
+<tr><td><code>forced_final</code></td><td>bool</td><td>轮数耗尽被强制收敛（true 时答案可能欠完整，占比很低）</td></tr>
+<tr><td><code>latency_ms</code></td><td>int | null</td><td>started_at → finished_at</td></tr>
+<tr><td><code>error</code></td><td>object | null</td><td>failed 时 <code>{code, message}</code></td></tr>
+</table></div>
+<div class="callout"><strong>failed 的语义</strong>：同步 POST 遇作答失败返回 <span class="pill s5">502</span>（problem+json，含 <code>answer_id</code>）；但 <code>GET /v1/answers/{id}</code> 对存在的资源永远 <span class="pill s2">200</span>——资源存在与作答成败是两个正交概念。</div>
+
+<h2 id="documents"><span class="no">6</span>知识库目录</h2>
+<p>试用前先看知识库里有什么：<code>GET /v1/documents?limit=50&amp;offset=0</code> 分页列出全部文档（标题 / 语言 / 一句话摘要 / token 数 / 章节数）；<code>GET /v1/documents/{doc_id}</code> 返回单篇章节目录。<strong>不返回正文</strong>——正文只作为作答证据在服务端使用。</p>
+<p>知识库为评测语料原貌：约 8 篇 CAE 金标文档（LS-DYNA 流固耦合、HJC 本构、水下爆炸、含 12.8 万 token 英文教材）+ 218 篇跨领域干扰文档。检索必须在噪声中命中——这正是系统被评测验证过的能力，而非「只放正确答案」的演示盘。</p>
+
+<h2 id="errors"><span class="no">7</span>错误模型</h2>
+<p>所有非 2xx 响应统一为 <strong>RFC 9457 <code>application/problem+json</code></strong>，永远包含机器可读 <code>code</code> 与用于排障对账的 <code>request_id</code>：</p>
+<pre><code>{
+  <span class="str">"type"</span>: <span class="str">"https://deepreadqa.dev/errors/rate-limited"</span>,
+  <span class="str">"title"</span>: <span class="str">"Too Many Requests"</span>,
+  <span class="str">"status"</span>: 429,
+  <span class="str">"detail"</span>: <span class="str">"API key exceeded 10 requests/min"</span>,
+  <span class="str">"code"</span>: <span class="str">"rate_limited"</span>,
+  <span class="str">"request_id"</span>: <span class="str">"req_fe810650b608"</span>,
+  <span class="str">"retry_after"</span>: 42
+}</code></pre>
+<div class="tablewrap"><table>
+<tr><th>code</th><th>HTTP</th><th>场景</th><th>客户端处置</th></tr>
+<tr><td><code>invalid_request</code></td><td><span class="pill s4">422</span></td><td>字段缺失 / 未知字段 / 问题为空或超长（附 <code>errors</code> 定位）</td><td>修正请求，勿重试</td></tr>
+<tr><td><code>unauthorized</code></td><td><span class="pill s4">401</span></td><td>key 缺失或错误</td><td>检查 key，勿重试</td></tr>
+<tr><td><code>not_found</code></td><td><span class="pill s4">404</span></td><td>answer id 不存在或已过 TTL；doc_id / 路径不存在</td><td>勿重试</td></tr>
+<tr><td><code>rate_limited</code></td><td><span class="pill s4">429</span></td><td>超出速率限制（带 <code>Retry-After</code>）</td><td>按 Retry-After 退避重试</td></tr>
+<tr><td><code>queue_full</code></td><td><span class="pill s5">503</span></td><td>作答队列饱和（<code>Retry-After: 30</code>）</td><td>退避重试</td></tr>
+<tr><td><code>not_ready</code></td><td><span class="pill s5">503</span></td><td>服务启动中 / 引擎异常（<code>Retry-After: 10</code>）</td><td>退避重试</td></tr>
+<tr><td><code>answer_failed</code></td><td><span class="pill s5">502</span></td><td>上游 LLM 主备链路耗尽（附 <code>answer_id</code>）</td><td>可重试；带 answer_id 联系运营方</td></tr>
+<tr><td><code>internal</code></td><td><span class="pill s5">500</span></td><td>未预期异常（不泄漏堆栈）</td><td>带 request_id 联系运营方</td></tr>
+</table></div>
+
+<h2 id="ratelimit"><span class="no">8</span>速率限制</h2>
+<p>仅 <code>POST /v1/answers</code> 计费限流：<strong>每 key 令牌桶，默认 10 次/分钟、突发 5</strong>（每次作答消耗真实 LLM 成本）。GET 轮询与目录端点不占作答配额。超限返回 <span class="pill s4">429</span> + <code>Retry-After</code>。需要更高配额请联系运营方（服务端配置项，即时生效）。</p>
+
+<h2 id="retry"><span class="no">9</span>超时与重试指北</h2>
+<div class="tablewrap"><table>
+<tr><th>项</th><th>建议值</th><th>理由</th></tr>
+<tr><td>连接超时</td><td class="num">5 s</td><td>常规</td></tr>
+<tr><td>读超时（同步 POST）</td><td class="num">≥ 360 s</td><td>服务端等待上限 300s + 余量；<strong>低于此值等于自断长答案</strong></td></tr>
+<tr><td>读超时（异步 POST / GET）</td><td class="num">30 s</td><td>受理与轮询都是快请求</td></tr>
+<tr><td>重试对象</td><td>仅 429/503 与网络错误</td><td>4xx 是请求本身的问题，重试无意义</td></tr>
+<tr><td>重试上限</td><td class="num">5 次，退避封顶 60 s</td><td>防雪崩</td></tr>
+<tr><td>POST 重试</td><td>必须复用 <code>Idempotency-Key</code></td><td>否则重复计费</td></tr>
+</table></div>
+<p>经反向代理部署时同理：<code>proxy_read_timeout ≥ 360s</code>，或统一走异步模式绕开长连接。</p>
+
+<h2 id="perf"><span class="no">10</span>性能与成本（真实测量）</h2>
+<p>2026-07-09 · 生产知识库 · 2 workers · <code>anthropic/claude-opus-4.8</code>，逐条真实请求：</p>
+<div class="statgrid">
+  <div class="stat"><div class="v">5.3<small> s</small></div><div class="k">冷启动 → 就绪（建 BM25 索引）</div></div>
+  <div class="stat"><div class="v">42.7<small> s</small></div><div class="k">单概念题（同步，3 轮，5.6 万 tok）</div></div>
+  <div class="stat"><div class="v">106.2<small> s</small></div><div class="k">跨文档对比题（7 轮，16.9 万 tok）</div></div>
+  <div class="stat"><div class="v">40~120<small> s</small></div><div class="k">典型延迟区间（P95 预算 300 s）</div></div>
+</div>
+<p>经验法则：越需要跨文档对比与数值抽取，轮数与耗时越高。吞吐上限 = worker 数（默认 2，可配置）；超出进入队列，队列满即 <span class="pill s5">503</span> 快速失败——宁可显式拒绝，不静默排长队。</p>
+
+<h2 id="versioning"><span class="no">11</span>分页 · 版本化 · 弃用</h2>
+<ul>
+<li><strong>分页</strong>：<code>limit</code>（1~200，默认 50）/ <code>offset</code>，响应带 <code>total</code>，顺序稳定。</li>
+<li><strong>版本化</strong>：路径版本 <code>/v1</code>；同版本内只做加法，破坏性变更升 <code>/v2</code>。</li>
+<li><strong>弃用</strong>：提前 90 天在响应头加 <code>Deprecation</code> 与 <code>Sunset</code>（RFC 8594）并公告。</li>
+<li>客户端唯一的向前兼容义务：<strong>容忍未知响应字段</strong>。</li>
+</ul>
+
+<h2 id="observability"><span class="no">12</span>可观测性</h2>
+<p>每个响应带 <code>X-Request-ID</code>（可传入自定义值透传）与 <code>X-Response-Time-Ms</code>；排障时提供 request_id 即可对账服务端日志。<code>GET /metrics</code> 输出 Prometheus 文本：请求计数（按方法/路由/状态）、作答终态计数、作答延迟直方图（1~600s 桶）、队列深度。隐私纪律：<strong>访问日志不记录问题与答案正文</strong>。</p>
+
+<h2 id="deploy"><span class="no">13</span>部署与配置</h2>
+<pre><code><span class="cm"># 安装并启动（Python ≥3.10）</span>
+pip install -e ".[api]"
+export DEEPREADQA_API_KEYS="&lt;key1&gt;,&lt;key2&gt;"
+python3 -m deepreadqa_api --host 0.0.0.0 --port 8000</code></pre>
+<div class="tablewrap"><table>
+<tr><th>环境变量</th><th>默认</th><th>说明</th></tr>
+<tr><td><code>DEEPREADQA_API_KEYS</code></td><td>—（必填）</td><td>逗号分隔。<strong>未配置则拒绝启动</strong>（除非显式 <code>DEEPREADQA_AUTH_DISABLED=1</code>，仅限内网调试）</td></tr>
+<tr><td><code>DEEPREADQA_DB</code></td><td><code>store/cae_vlmocr.db</code></td><td>知识库（生产 VLM-OCR 修复库）</td></tr>
+<tr><td><code>DEEPREADQA_WORKERS</code></td><td class="num">2</td><td>并发作答 worker 数（≈并发上限）</td></tr>
+<tr><td><code>DEEPREADQA_QUEUE_MAX</code></td><td class="num">16</td><td>队列上限，满则 503</td></tr>
+<tr><td><code>DEEPREADQA_SYNC_WAIT_CAP_S</code></td><td class="num">300</td><td>同步等待上限，超过转 202</td></tr>
+<tr><td><code>DEEPREADQA_JOB_TTL_S</code></td><td class="num">3600</td><td>answer 资源保留时长</td></tr>
+<tr><td><code>DEEPREADQA_RATE_LIMIT_RPM / _BURST</code></td><td class="num">10 / 5</td><td>每 key 限流</td></tr>
+<tr><td><code>DEEPREADQA_MAX_QUESTION_CHARS</code></td><td class="num">2000</td><td>问题长度上限</td></tr>
+</table></div>
+<p>探针接法：liveness = <code>/healthz</code>，readiness = <code>/readyz</code>（索引加载完成才放流量）。systemd 单元示例见仓库 <code>docs/api/API.md</code> §13。</p>
+<div class="callout warn"><strong>已知边界（设计取舍，非缺陷）</strong>：answer 资源存储在进程内存——重启丢失未取回的结果，多副本需按 key 会话粘滞。这是单实例试用交付的刻意取舍；需要多副本时把 <code>JobStore</code> 换为 Redis 实现即可（接口已隔离）。</div>
+
+<h2 id="security"><span class="no">14</span>安全</h2>
+<ul>
+<li>Bearer key 常数时间比较（<code>hmac.compare_digest</code>），无时序侧信道。</li>
+<li>服务对知识库<strong>只读</strong>（SQLite read-only 连接），无任何写入/上传面。</li>
+<li>错误响应不含堆栈；日志不含正文与凭证。</li>
+<li>服务本身不做 TLS——生产置于反向代理/网关之后；不内置 CORS（服务器间 API）。</li>
+</ul>
+
+<h2 id="faq"><span class="no">15</span>FAQ</h2>
+<p><strong>问出知识库范围会怎样？</strong> 检索不到强证据时答案会显式弱化或声明依据不足；<code>sources</code> 为空或不相关即信号。先用 <code>GET /v1/documents</code> 了解范围。</p>
+<p><strong>同一问题两次答案会一样吗？</strong> 不保证逐字一致（LLM 非确定性），但事实内容与来源应稳定。需要字面复现用 <code>Idempotency-Key</code> 取同一资源。</p>
+<p><strong>能流式输出吗？</strong> v1 未提供：作答主要耗时在检索与阅读阶段（无 token 可流），流式收益有限；有强需求会以 /v2 SSE 形式提供。</p>
+<p><strong>中英文都能问吗？</strong> 都可以，系统内部做双语检索（知识库本身中英混合）。</p>
+
+<h2 id="changelog"><span class="no">16</span>变更日志</h2>
+<div class="tablewrap"><table>
+<tr><th>日期</th><th>版本</th><th>变更</th></tr>
+<tr><td class="num">2026-07-09</td><td class="num">1.0.0</td><td>首个公开版本：同步/异步作答、幂等、限流、RFC 9457 错误模型、目录端点、探针与 Prometheus 指标</td></tr>
+</table></div>
+
+<footer>DeepreadQA API · 机读契约 <code>GET /openapi.json</code> · 交互调试 <code>GET /docs</code> · 完整手册见仓库 <code>docs/api/API.md</code></footer>
+</main>
+</div>
+
+<script>
+  // 代码块复制按钮
+  document.querySelectorAll("pre").forEach(function (pre) {
+    var btn = document.createElement("button");
+    btn.className = "copy-btn"; btn.type = "button"; btn.textContent = "复制";
+    btn.addEventListener("click", function () {
+      navigator.clipboard.writeText(pre.querySelector("code").innerText).then(function () {
+        btn.textContent = "已复制"; setTimeout(function () { btn.textContent = "复制"; }, 1600);
+      });
+    });
+    pre.appendChild(btn);
+  });
+  // 目录高亮当前章节
+  var links = Array.prototype.slice.call(document.querySelectorAll("nav.toc a"));
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute("href").slice(1)] = a; });
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        links.forEach(function (a) { a.classList.remove("active"); });
+        var a = byId[e.target.id]; if (a) a.classList.add("active");
+      }
+    });
+  }, { rootMargin: "0px 0px -75% 0px" });
+  document.querySelectorAll("main h2[id]").forEach(function (h) { observer.observe(h); });
+</script>
+</body>
+</html>
