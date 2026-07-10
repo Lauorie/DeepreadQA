@@ -107,6 +107,10 @@ class Config:
                            ("compose_max_tokens", "DEEPREAD_COMPOSE_MAX_TOKENS")):
             if field not in overrides and os.environ.get(env):
                 overrides[field] = int(os.environ[env])
+        # Long-generation models (large visible budgets + thinking) can exceed
+        # the 180s default per-request timeout; expose it for eval campaigns.
+        if "request_timeout_s" not in overrides and os.environ.get("DEEPREAD_REQUEST_TIMEOUT_S"):
+            overrides["request_timeout_s"] = float(os.environ["DEEPREAD_REQUEST_TIMEOUT_S"])
         if "reasoning_effort" not in overrides and os.environ.get("DEEPREAD_REASONING_EFFORT"):
             overrides["reasoning_effort"] = os.environ["DEEPREAD_REASONING_EFFORT"].strip()
         if "verify_loop" not in overrides and "DEEPREAD_VERIFY" in os.environ:
