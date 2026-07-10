@@ -564,6 +564,12 @@ PREVIEW {doc_id} [{total_characters} chars (truncated)]    ← 全文≤10000字
 4. 用命中行的字符偏移在 sections 的 `[start_pos, end_pos)` 区间上查所属章节名（这就是 §2.2 里偏移量的用途）；
 5. 每个 pattern 最多 `grep_passages_per_pattern`(3) 段；全部输出累计超 `grep_token_cap`(9000) token 立即封顶。
 
+**匹配发生在哪一端**（`tools.py::_t_grep`，约 250 行起）：全部在 **Python 进程内存**里。SQLite 在这条链路上只是 KV 存储——`Reader.raw()` 一句 `SELECT * FROM documents WHERE doc_id = ?` 取回整篇 `raw_md`，库端**没有** FTS5/LIKE/任何检索参与；随后逐行 `pat.lower() in line.lower()` 判断。复刻到其他存储（MySQL/对象存储）时只需保证"按 doc_id 取全文"这一个能力。
+
+**为什么是子串而不是正则、不上库端索引**（设计理由）：
+- pattern 是 LLM 现场生成的，当正则编译的失败率不可忽视——CAE 场景常见 `\varepsilon`、`C(1+ln)` 这类含转义符/未配对括号的串，`re.compile` 直接抛错；子串匹配永不报错，也天然免疫正则回溯爆炸（ReDoS）。代价（不支持模糊模式）由 schema 允许一次传多个 patterns 来补偿。
+- 性能不构成理由去建索引：知识库单篇上限约 13 万 token（Benson 教材），逐行 `in` 全扫是毫秒级；grep 的定位是"已锁定单篇后的篇内精确定位"，跨文档检索由 `search`（BM25）负责，两者作用域刻意分开。
+
 **返回格式**：
 ```
 [{doc_id} :: {章节名} :: '{pattern}' near line {行号}]      ← 无所属章节时省略中段
