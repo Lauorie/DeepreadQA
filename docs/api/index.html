@@ -85,7 +85,7 @@
   }
   .tb-top h1 { margin: 0; font-size: 30px; line-height: 1.25; letter-spacing: -.01em; text-wrap: balance; }
   .tb-top p { margin: 10px 0 0; color: var(--muted); max-width: 60ch; }
-  .tb-grid { display: grid; grid-template-columns: repeat(6, 1fr); }
+  .tb-grid { display: grid; grid-template-columns: repeat(5, 1fr); }
   .tb-cell { padding: 10px 14px 12px; border-right: 1px solid var(--line); }
   .tb-cell:last-child { border-right: 0; }
   .tb-cell .k {
@@ -224,17 +224,16 @@
     <p>渐进式阅读 AgenticRAG 问答服务：对 226 篇 CAE/仿真知识库提问，系统检索、逐章精读后返回<strong>带真实阅读来源</strong>的答案。本页所有响应示例与性能数字均来自对生产库的真实调用。</p>
   </div>
   <div class="tb-grid">
-    <div class="tb-cell"><span class="k">版本</span><span class="v">1.1.0</span></div>
+    <div class="tb-cell"><span class="k">版本</span><span class="v">1.1.1</span></div>
     <div class="tb-cell"><span class="k">API</span><span class="v">v1</span></div>
     <div class="tb-cell"><span class="k">协议</span><span class="v">OpenAPI 3.1</span></div>
-    <div class="tb-cell"><span class="k">作答模型</span><span class="v">opus-4.8</span></div>
+    <div class="tb-cell"><span class="k">作答模型</span><span class="v">qwen3.7-max</span></div>
     <div class="tb-cell"><span class="k">知识库</span><span class="v">226 docs</span></div>
-    <div class="tb-cell"><span class="k">评测均分</span><span class="v">~0.82 <small>v3</small></span></div>
-  </div>
+      </div>
 </header>
 
 <h2 id="overview"><span class="no">1</span>概览</h2>
-<p>一次作答是一个<strong>长任务</strong>（典型 40~120 秒）：agent 先用双语 BM25 检索候选文档，再查目录（每章 TL;DR 与 token 预算）、按章精读、必要时 grep 数值，证据充分后按 rubric 纪律写出终答。官方评测（94 题开放问答，v3 校准 rubric，三轮均值）得分 <strong>~0.82</strong>，超过同口径复现的 Microsoft AgenticRAG（0.814）。</p>
+<p>一次作答是一个<strong>长任务</strong>（典型 1~3 分钟）：agent 先用双语 BM25 检索候选文档，再查目录（每章 TL;DR 与 token 预算）、按章精读、必要时 grep 数值，证据充分后按 rubric 纪律写出终答。</p>
 <div class="flow">POST /v1/answers ─▶ 认证 ─▶ 限流 ─▶ 幂等去重 ─▶ 作答队列 ─▶ worker（agent 循环）─▶ answer 资源
                                                           ▲
                        GET /v1/answers/{id} 轮询 ──────────┘</div>
@@ -276,22 +275,22 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 <p>请求体约束：<code>question</code> 必填，去空白后 1~2000 字符；<strong>未知字段一律 422 拒绝</strong>（防拼写错误静默失效）。</p>
 
 <h2 id="resource"><span class="no">5</span>answer 资源</h2>
-<p>POST 与 GET 返回同一形状。以下为 2026-07-09 的真实响应（未删改）：</p>
+<p>POST 与 GET 返回同一形状。以下为 2026-07-15 的真实响应（未删改）：</p>
 <pre><code>{
-  <span class="str">"id"</span>: <span class="str">"ans_b334abda0a151fb4"</span>,
+  <span class="str">"id"</span>: <span class="str">"ans_2c1621b2874a036d"</span>,
   <span class="str">"object"</span>: <span class="str">"answer"</span>,
   <span class="str">"status"</span>: <span class="str">"succeeded"</span>,
   <span class="str">"question"</span>: <span class="str">"在 LS-DYNA 中模拟水下爆炸对混凝土重力坝的破坏，常用哪些流固耦合方法？…"</span>,
-  <span class="str">"answer"</span>: <span class="str">"…最常用且实际采用的是 **ALE 多物质流固耦合（全耦合）方法**…（约 1000 字）"</span>,
+  <span class="str">"answer"</span>: <span class="str">"…主要采用多物质 ALE 算法、重合 Lagrange 网格法和 USA 代码耦合法三种流固耦合方法…（约 1000 字，含适用场景对比）"</span>,
   <span class="str">"sources"</span>: [
-    {<span class="str">"doc_id"</span>: <span class="str">"ALE AND FLUID-STRUCTURE INTERACTION IN LS-DYNA.md"</span>, <span class="str">"title"</span>: <span class="str">"ALE and Fluid-Structure Interaction in LS-DYNA"</span>},
+    {<span class="str">"doc_id"</span>: <span class="str">"oezarmut_thyssenkrupp_Fluid-Composite_Structure-Interaction_in_Underwater_Shock_Simulations.md"</span>, <span class="str">"title"</span>: <span class="str">"Fluid-Composite Structure-Interaction in Underwater Shock Simulations"</span>},
     {<span class="str">"doc_id"</span>: <span class="str">"水下爆炸冲击荷载作用下混凝土重力坝的破坏模式.md"</span>, <span class="str">"title"</span>: <span class="str">"水下爆炸冲击荷载作用下混凝土重力坝的破坏模式"</span>}
   ],
-  <span class="str">"usage"</span>: {<span class="str">"iterations"</span>: 7, <span class="str">"total_tokens"</span>: 168572, <span class="str">"compactions"</span>: 0,
-            <span class="str">"documents_read"</span>: 4, <span class="str">"documents_seen"</span>: 20},
+  <span class="str">"usage"</span>: {<span class="str">"iterations"</span>: 6, <span class="str">"total_tokens"</span>: 152828, <span class="str">"compactions"</span>: 0,
+            <span class="str">"documents_read"</span>: 3, <span class="str">"documents_seen"</span>: 20},
   <span class="str">"forced_final"</span>: false,
-  <span class="str">"created_at"</span>: <span class="str">"2026-07-09T09:01:08.352Z"</span>,
-  <span class="str">"latency_ms"</span>: 106166,
+  <span class="str">"created_at"</span>: <span class="str">"2026-07-15T07:35:09.466Z"</span>,
+  <span class="str">"latency_ms"</span>: 159685,
   <span class="str">"error"</span>: null
 }</code></pre>
 <div class="tablewrap"><table>
@@ -334,7 +333,7 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 <tr><td>DELETE</td><td class="mono">/v1/collections/{cid}</td><td>删除（含全部文档，不可恢复）→ 204</td></tr>
 </table></div>
 <p><code>POST /v1/answers</code> 增加可选字段 <code>collection_id</code>（缺省 = 内置 CAE 库）。约束：<code>.md/.markdown</code>、严格 UTF-8、单文件 ≤ 2 MB；每 key ≤ 10 库、每库 ≤ 50 篇；collection 只对创建它的 key 可见（他人 404）；上传与作答共享限流桶；文档与状态落盘、重启不丢（摄取中断的文档标 failed，重传即可）。</p>
-<div class="callout"><strong>实测（2026-07-10）</strong>：上传 815 字节内部仿真规范 → <strong>15 秒</strong> ready（含真实 LLM 富集）→ 提问阈值类问题 → <strong>29.5 秒 / 9,189 tokens</strong>，答案逐字命中文档独有数值（4.2% / 2.8% / IHQ=4 / QM=0.03），<code>sources</code> 精确指向上传文档——证明作答扎根于上传内容而非模型参数知识。</div>
+<div class="callout"><strong>实测（2026-07-15）</strong>：上传 815 字节内部仿真规范 → <strong>15 秒</strong> ready（含真实 LLM 富集）→ 提问阈值类问题 → <strong>43.3 秒 / 10,211 tokens</strong>，答案逐字命中文档独有数值（4.2% / 2.8% / IHQ=4 / QM=0.03），<code>sources</code> 精确指向上传文档——证明作答扎根于上传内容而非模型参数知识。</div>
 
 <h2 id="errors"><span class="no">8</span>错误模型</h2>
 <p>所有非 2xx 响应统一为 <strong>RFC 9457 <code>application/problem+json</code></strong>，永远包含机器可读 <code>code</code> 与用于排障对账的 <code>request_id</code>：</p>
@@ -378,12 +377,12 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 <p>经反向代理部署时同理：<code>proxy_read_timeout ≥ 360s</code>，或统一走异步模式绕开长连接。</p>
 
 <h2 id="perf"><span class="no">11</span>性能与成本（真实测量）</h2>
-<p>2026-07-09 · 生产知识库 · 2 workers · <code>anthropic/claude-opus-4.8</code>，逐条真实请求：</p>
+<p>2026-07-15 · 生产知识库 · 2 workers · <code>qwen3.7-max</code>，逐条真实请求：</p>
 <div class="statgrid">
   <div class="stat"><div class="v">5.3<small> s</small></div><div class="k">冷启动 → 就绪（建 BM25 索引）</div></div>
-  <div class="stat"><div class="v">42.7<small> s</small></div><div class="k">单概念题（同步，3 轮，5.6 万 tok）</div></div>
-  <div class="stat"><div class="v">106.2<small> s</small></div><div class="k">跨文档对比题（7 轮，16.9 万 tok）</div></div>
-  <div class="stat"><div class="v">40~120<small> s</small></div><div class="k">典型延迟区间（P95 预算 300 s）</div></div>
+  <div class="stat"><div class="v">58.7<small> s</small></div><div class="k">单概念题（同步，4 轮，4.2 万 tok）</div></div>
+  <div class="stat"><div class="v">159.7<small> s</small></div><div class="k">跨文档对比题（6 轮，15.3 万 tok）</div></div>
+  <div class="stat"><div class="v">60~160<small> s</small></div><div class="k">典型延迟区间（P95 预算 300 s）</div></div>
 </div>
 <p>经验法则：越需要跨文档对比与数值抽取，轮数与耗时越高。吞吐上限 = worker 数（默认 2，可配置）；超出进入队列，队列满即 <span class="pill s5">503</span> 快速失败——宁可显式拒绝，不静默排长队。</p>
 
@@ -435,6 +434,7 @@ python3 -m deepreadqa_api --host 0.0.0.0 --port 8000</code></pre>
 <h2 id="changelog"><span class="no">17</span>变更日志</h2>
 <div class="tablewrap"><table>
 <tr><th>日期</th><th>版本</th><th>变更</th></tr>
+<tr><td class="num">2026-07-15</td><td class="num">1.1.1</td><td>作答模型切换为 qwen3.7-max（主备双端点自动失效转移）；文档内全部性能数字按新模型重测更新</td></tr>
 <tr><td class="num">2026-07-10</td><td class="num">1.1.0</td><td>私有知识库（collections）：上传 markdown 建库、摄取状态轮询、<code>collection_id</code> 作答；新错误码 upload_rejected / collection_limit / collection_not_ready</td></tr>
 <tr><td class="num">2026-07-09</td><td class="num">1.0.0</td><td>首个公开版本：同步/异步作答、幂等、限流、RFC 9457 错误模型、目录端点、探针与 Prometheus 指标</td></tr>
 </table></div>

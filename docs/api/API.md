@@ -1,6 +1,6 @@
 # DeepreadQA API 参考手册
 
-> 版本 `1.1.0` · API 版本 `v1` · OpenAPI 3.1：[`openapi.json`](./openapi.json)（在线：`GET /openapi.json`，交互式调试：`GET /docs`）
+> 版本 `1.1.1` · API 版本 `v1` · OpenAPI 3.1：[`openapi.json`](./openapi.json)（在线：`GET /openapi.json`，交互式调试：`GET /docs`）
 > 本文档中的全部响应示例与性能数字均来自 2026-07-09/07-10 对生产环境的真实调用，非手工编造。
 
 ---
@@ -9,9 +9,8 @@
 
 DeepreadQA API 把「渐进式阅读 AgenticRAG」问答系统包装为一个 HTTP 服务：对一个 **226 篇文档的 CAE（计算机辅助工程/仿真）知识库**提出自然语言问题，系统像研究员一样检索 → 看目录 → 逐章精读 → 汇总作答，返回**带真实阅读来源**的答案。
 
-- **作答质量**：官方 rubric 评测（94 题开放问答，v3 校准，judge=gpt-5.4-mini）三轮均值 **~0.82**，超过同口径复现的 Microsoft AgenticRAG（0.814）。
-- **作答模型**：`anthropic/claude-opus-4.8`；检索为进程内 BM25（无外部向量库依赖）。
-- **一次作答是一个长任务**：典型延迟 40~120 秒（详见 [§11 性能与成本](#11-性能与成本真实测量)），因此 API 同时提供同步与异步两种消费模式。
+- **作答模型**：`qwen3.7-max`（主备双端点自动失效转移）；检索为进程内 BM25（无外部向量库依赖）。
+- **一次作答是一个长任务**：典型延迟 1~3 分钟（详见 [§11 性能与成本](#11-性能与成本真实测量)），因此 API 同时提供同步与异步两种消费模式。
 
 ```
 POST /v1/answers ──▶ 认证 ─▶ 限流 ─▶ 幂等去重 ─▶ 作答队列 ─▶ worker(agent 循环) ─▶ answer 资源
@@ -113,26 +112,26 @@ queued ──▶ running ──▶ succeeded
 
 ## 5. answer 资源
 
-`POST /v1/answers`（200）与 `GET /v1/answers/{id}` 返回同一形状。以下为真实响应（2026-07-09，未删改）：
+`POST /v1/answers`（200）与 `GET /v1/answers/{id}` 返回同一形状。以下为真实响应（2026-07-15，未删改）：
 
 ```json
 {
-  "id": "ans_b334abda0a151fb4",
+  "id": "ans_2c1621b2874a036d",
   "object": "answer",
   "status": "succeeded",
   "question": "在 LS-DYNA 中模拟水下爆炸对混凝土重力坝的破坏，常用哪些流固耦合方法？各自的适用场景是什么？",
-  "answer": "在 LS-DYNA 中模拟水下爆炸对混凝土重力坝的破坏，最常用且实际采用的是 **ALE 多物质流固耦合（全耦合）方法**……（约 1000 字，含公式与适用场景对比）",
+  "answer": "在 LS-DYNA 中模拟水下爆炸对混凝土重力坝的破坏，主要采用多物质 ALE 算法、重合 Lagrange 网格法和 USA 代码耦合法三种流固耦合方法……（约 1000 字，含适用场景对比）",
   "sources": [
-    {"doc_id": "ALE AND FLUID-STRUCTURE INTERACTION IN LS-DYNA.md", "title": "ALE and Fluid-Structure Interaction in LS-DYNA"},
+    {"doc_id": "oezarmut_thyssenkrupp_Fluid-Composite_Structure-Interaction_in_Underwater_Shock_Simulations.md", "title": "Fluid-Composite Structure-Interaction in Underwater Shock Simulations"},
     {"doc_id": "水下爆炸冲击荷载作用下混凝土重力坝的破坏模式.md", "title": "水下爆炸冲击荷载作用下混凝土重力坝的破坏模式"}
   ],
-  "usage": {"iterations": 7, "total_tokens": 168572, "compactions": 0,
-            "documents_read": 4, "documents_seen": 20},
+  "usage": {"iterations": 6, "total_tokens": 152828, "compactions": 0,
+            "documents_read": 3, "documents_seen": 20},
   "forced_final": false,
-  "created_at": "2026-07-09T09:01:08.352Z",
-  "started_at": "2026-07-09T09:01:08.353Z",
-  "finished_at": "2026-07-09T09:02:54.519Z",
-  "latency_ms": 106166,
+  "created_at": "2026-07-15T07:35:09.466Z",
+  "started_at": "2026-07-15T07:35:09.466Z",
+  "finished_at": "2026-07-15T07:37:49.151Z",
+  "latency_ms": 159685,
   "error": null
 }
 ```
@@ -213,10 +212,10 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 - **一致性**：作答使用提交时刻的索引快照；摄取完成后的新文档对**之后**提交的问题可见。
 - **持久性**：文档与摄取状态落盘（服务重启不丢）；重启时正在摄取中的文档标记为 failed（interrupted），重新上传即可。
 
-### 7.4 实测（2026-07-10，真实调用）
+### 7.4 实测（2026-07-15，真实调用）
 
 上传 815 字节内部仿真规范 → 15 秒 ready → 提问"沙漏能和滑移界面能的占比阈值？"
-→ **29.5 秒、9,189 tokens、4 轮迭代**，答案逐字命中文档中的独有数值（4.2% / 2.8% / IHQ=4 / QM=0.03），
+→ **43.3 秒、10,211 tokens、4 轮迭代**，答案逐字命中文档中的独有数值（4.2% / 2.8% / IHQ=4 / QM=0.03），
 `sources` 精确指向上传文档。文档独有的数值能被逐字答出，证明作答扎根于上传内容而非模型参数知识。
 
 ## 8. 错误模型
@@ -272,16 +271,16 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 
 ## 11. 性能与成本（真实测量）
 
-2026-07-09 · 生产知识库（226 docs）· 2 workers · `anthropic/claude-opus-4.8`，逐条真实请求：
+2026-07-15 · 生产知识库（226 docs）· 2 workers · `qwen3.7-max`，逐条真实请求：
 
 | 场景 | 延迟 | 迭代 | tokens | 精读/候选文档 |
 |---|---|---|---|---|
 | 冷启动 → `/readyz` 就绪（建 BM25 索引） | 5.3 s | — | — | — |
-| 单概念题（HJC 本构效应，同步） | 42.7 s | 3 | 55,662 | —/20 |
-| 单概念题变体（异步轮询，client.py 实测） | 47.0 s | 5 | 38,211 | 2/20 |
-| 跨文档对比题（水下爆炸 FSI 方法对比，异步） | 106.2 s | 7 | 168,572 | 4/20 |
+| 单概念题（HJC 本构效应，同步） | 58.7 s | 4 | 41,868 | 1/20 |
+| 跨文档对比题（水下爆炸 FSI 方法对比） | 159.7 s | 6 | 152,828 | 3/20 |
+| 私有知识库问答（单文档规范查询） | 43.3 s | 4 | 10,211 | 1/1 |
 
-经验法则：**典型 40~120 秒 / 4~17 万 tokens**；问题越需要跨文档对比与数值抽取，轮数与耗时越高。`forced_final: true` 表示 15 轮上限被触发，答案可能欠完整（占比很低）。吞吐上限 = worker 数（默认 2，可配置）；超出进入队列，队列满即 503 快速失败——宁可显式拒绝也不静默排长队。
+经验法则：**典型 60~160 秒 / 1~15 万 tokens**；问题越需要跨文档对比与数值抽取，轮数与耗时越高。`forced_final: true` 表示 15 轮上限被触发，答案可能欠完整（占比很低）。吞吐上限 = worker 数（默认 2，可配置）；超出进入队列，队列满即 503 快速失败——宁可显式拒绝也不静默排长队。
 
 ## 12. 分页 · 版本化 · 弃用策略
 
@@ -361,5 +360,6 @@ WantedBy=multi-user.target
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-07-15 | 1.1.1 | 作答模型切换为 `qwen3.7-max`（主备双端点自动失效转移）；文档内性能数字按新模型重测更新 |
 | 2026-07-10 | 1.1.0 | 私有知识库（collections）：上传 markdown 建库、摄取状态轮询、`collection_id` 作答；新错误码 `upload_rejected`/`collection_limit`/`collection_not_ready` |
 | 2026-07-09 | 1.0.0 | 首个公开版本：同步/异步作答、幂等、限流、problem+json 错误模型、目录端点、探针与指标 |
