@@ -32,9 +32,11 @@ def _route_template(request: Request, status: int) -> str:
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, metrics: Optional[Metrics] = None) -> None:
+    def __init__(self, app, metrics: Optional[Metrics] = None,
+                 max_body_bytes: Optional[int] = None) -> None:
         super().__init__(app)
         self._metrics = metrics
+        self._max_body_bytes = max_body_bytes
 
     async def dispatch(self, request: Request,
                        call_next: RequestResponseEndpoint) -> Response:
@@ -43,6 +45,18 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                       else f"req_{uuid.uuid4().hex[:12]}")
         request.state.request_id = request_id
         start = time.perf_counter()
+        content_length = request.headers.get("content-length")
+        if (self._max_body_bytes is not None and content_length
+                and content_length.isdigit()
+                and int(content_length) > self._max_body_bytes):
+            return JSONResponse(
+                status_code=413,
+                content=problem_body(
+                    request, code="payload_too_large", status=413,
+                    detail=f"request body exceeds {self._max_body_bytes} "
+                           "bytes"),
+                media_type=PROBLEM_CONTENT_TYPE,
+                headers={"X-Request-ID": request_id})
         try:
             response = await call_next(request)
         except Exception as exc:  # noqa: BLE001 - last-resort 500 with headers intact

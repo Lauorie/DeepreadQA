@@ -73,6 +73,7 @@ class AnswerEngine:
         self._qa_factory = qa_factory
         self._catalog = catalog
         self._metrics = metrics
+        self._recorder: Optional[object] = None
         self._queue: queue.Queue = queue.Queue(maxsize=cfg.queue_max)
         self._threads: list[threading.Thread] = []
         self._ready = threading.Event()
@@ -118,15 +119,17 @@ class AnswerEngine:
         index = SearchIndex(boot)  # built once, shared read-only
         catalog = [boot.head(d["doc_id"]) for d in boot.list_docs()]
 
+        from deepreadqa import ChoiceQA
+
         def factory(db_path: Optional[str] = None,
-                    index_override: object = None) -> object:
+                    index_override: object = None,
+                    mode: str = "qa") -> object:
             # Reader (and its sqlite connection) is created inside the
             # worker thread that calls this factory.
+            cls = ChoiceQA if mode == "choice" else DeepreadQA
             if db_path is None:
-                return DeepreadQA(qa_cfg, reader=Reader(qa_cfg.db_path),
-                                  index=index)
-            return DeepreadQA(qa_cfg, reader=Reader(db_path),
-                              index=index_override)
+                return cls(qa_cfg, reader=Reader(qa_cfg.db_path), index=index)
+            return cls(qa_cfg, reader=Reader(db_path), index=index_override)
 
         return factory, catalog
 
@@ -167,6 +170,10 @@ class AnswerEngine:
     def attach_metrics(self, metrics: object) -> None:
         self._metrics = metrics
 
+    def attach_recorder(self, recorder: object) -> None:
+        """Sink with record(job, resource); called for every finished job."""
+        self._recorder = recorder
+
     @property
     def queue_depth(self) -> int:
         return self._queue.qsize()
@@ -183,33 +190,58 @@ class AnswerEngine:
 
     # -- worker ------------------------------------------------------------
 
+    def _resolve_qa(self, job: Job, builtin: dict) -> object:
+        """Per-job QA instance; builtin ones are cached per worker by mode."""
+        if job.collection_db is not None:
+            return self._qa_factory(job.collection_db, job.collection_index,
+                                    job.mode)
+        if job.mode not in builtin:
+            builtin[job.mode] = self._qa_factory(None, None, job.mode)
+        return builtin[job.mode]
+
+    @staticmethod
+    def _usage(res: object, read: list[str]) -> dict:
+        return {"iterations": res.iterations,
+                "total_tokens": res.total_tokens,
+                "compactions": res.compactions,
+                "documents_read": len(read),
+                "documents_seen": len(res.seen_docs)}
+
     def _worker_loop(self) -> None:
-        builtin_qa = self._qa_factory(None, None)
+        builtin: dict[str, object] = {"qa": self._qa_factory(None, None)}
         while True:
             job = self._queue.get()
             if job is None:
                 return
             job.mark_running(time.time())
             try:
-                if job.collection_db is not None:
-                    qa = self._qa_factory(job.collection_db,
-                                          job.collection_index)
-                    titles = job.collection_titles or {}
-                else:
-                    qa = builtin_qa
-                    titles = self._titles
+                qa = self._resolve_qa(job, builtin)
+                titles = (job.collection_titles or {}
+                          if job.collection_db is not None else self._titles)
+                if job.mode == "choice":
+                    res = qa.answer_choice(job.question, job.options or {})
+                    read = _docs_read(res.tool_calls)
+                    if res.error and res.abstained:
+                        job.fail(code="answer_failed", message=res.error,
+                                 now=time.time())
+                    else:
+                        job.succeed(
+                            answer=res.compose_text or res.draft,
+                            sources=[{"doc_id": d, "title": titles.get(d)}
+                                     for d in read],
+                            usage=self._usage(res, read),
+                            forced_final=res.forced_final,
+                            choice=res.answer or None,
+                            abstained=res.abstained, now=time.time())
+                    continue
                 res = qa.answer(job.question)
                 if res.answer:
                     read = _docs_read(res.tool_calls)
                     sources = [{"doc_id": d, "title": titles.get(d)}
                                for d in read]
-                    usage = {"iterations": res.iterations,
-                             "total_tokens": res.total_tokens,
-                             "compactions": res.compactions,
-                             "documents_read": len(read),
-                             "documents_seen": len(res.seen_docs)}
                     job.succeed(answer=res.answer, sources=sources,
-                                usage=usage, forced_final=res.forced_final,
+                                usage=self._usage(res, read),
+                                forced_final=res.forced_final,
                                 now=time.time())
                 else:
                     job.fail(code="answer_failed",
@@ -224,4 +256,6 @@ class AnswerEngine:
             finally:
                 if self._metrics is not None:
                     self._metrics.observe_answer(job)
+                if self._recorder is not None:
+                    self._recorder.record(job, job.to_resource())
                 self._queue.task_done()

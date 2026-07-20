@@ -1,6 +1,6 @@
 # DeepreadQA API 参考手册
 
-> 版本 `1.1.1` · API 版本 `v1` · OpenAPI 3.1：[`openapi.json`](./openapi.json)（在线：`GET /openapi.json`，交互式调试：`GET /docs`）
+> 版本 `1.2.0` · API 版本 `v1` · OpenAPI 3.1：[`openapi.json`](./openapi.json)（在线：`GET /openapi.json`，交互式调试：`GET /docs`）
 > 本文档中的全部响应示例与性能数字均来自 2026-07-09/07-10 对生产环境的真实调用，非手工编造。
 
 ---
@@ -9,7 +9,7 @@
 
 DeepreadQA API 把「渐进式阅读 AgenticRAG」问答系统包装为一个 HTTP 服务：对一个 **226 篇文档的 CAE（计算机辅助工程/仿真）知识库**提出自然语言问题，系统像研究员一样检索 → 看目录 → 逐章精读 → 汇总作答，返回**带真实阅读来源**的答案。
 
-- **作答模型**：`qwen3.7-max`（主备双端点自动失效转移）；检索为进程内 BM25（无外部向量库依赖）。
+- **作答模型**：`qwen3.7-max`；检索为进程内 BM25（无外部向量库依赖）。
 - **一次作答是一个长任务**：典型延迟 1~3 分钟（详见 [§11 性能与成本](#11-性能与成本真实测量)），因此 API 同时提供同步与异步两种消费模式。
 
 ```
@@ -51,6 +51,26 @@ curl -sS -m 360 "$BASE_URL/v1/answers" \
   -H "Content-Type: application/json" \
   -d '{"question": "HJC 本构模型模拟混凝土受冲击时主要考虑哪些效应？"}'
 ```
+
+### 2.1 使用须知与限制（请务必先读）
+
+为保证试用环境对所有调用方稳定，以下限制在服务端强制执行：
+
+| 类别 | 限制 | 超出时 |
+|---|---|---|
+| 上传规模 | 单文件 ≤ 10 MB；每库 ≤ 50 篇；每 key ≤ 10 库；单次请求 ≤ 50 个文件；请求体总量 ≤ 110 MB | 422 / 413，整批拒绝 |
+| 速率 | `POST /v1/answers` 与文档上传**共享**每 key 10 次/分钟（突发 5） | 429 + `Retry-After` |
+| 并发 | 同时最多 2 个作答在执行，等待队列 16 | 队列满 503 + `Retry-After` |
+| 作答耗时 | qa 模式典型 1~3 分钟；choice 模式实测 18~26 秒 | 同步等待 >300s 转 202 轮询 |
+| 结果保留 | answer 资源保留 1 小时 | 过期后 404 |
+
+约定与建议：
+
+- **不要一次投喂上千文档**：超限会被直接拒绝。若评测语料确实超过限额，分多个 collection 分批传，或提前联系运营方调整（服务端配置项，即时生效）。
+- **摄取是排队的**（默认 1 条摄取线程，每篇约 15 秒~1 分钟）：50 篇一次传入会陆续 ready，用状态端点轮询即可，**不要因为没立刻 ready 而重复上传**。
+- **提交纪律**：批量评测请串行或 ≤2 并发提交；收到 429/503 按 `Retry-After` 指数退避，禁止重试风暴；网络重试务必带同一 `Idempotency-Key`（不重复计费）。
+- **内容边界**：试用环境为 HTTP 明文，请勿上传敏感/涉密文档；上传的文档与问题内容会发送至上游 LLM 用于作答。
+- **单实例语义**：服务重启会丢失未取回的作答结果；文档本体与摄取状态落盘不丢，摄取中断的文档标记 failed，重传即可。
 
 可直接运行的完整示例：[`examples/ask.sh`](../../examples/ask.sh)（curl）、[`examples/client.py`](../../examples/client.py)（httpx，含异步轮询 + 指数退避 + 幂等重试，推荐作为集成模板）。
 
@@ -108,6 +128,28 @@ queued ──▶ running ──▶ succeeded
                  └────▶ failed        （终态资源保留 1 小时后 404）
 ```
 
+### 4.5 选择题模式（mode=choice）
+
+四选一选择题走专用管线：agent 综合题干与四个选项的术语检索，**对每个选项逐项在证据中确证/证伪**（干扰项常靠篡改一个数字或限定词），最终返回结构化的选项字母。
+
+```bash
+curl -sS -m 360 "$BASE_URL/v1/answers" \
+  -H "Authorization: Bearer $DEEPREADQA_API_KEY" -H "Content-Type: application/json" \
+  -d '{
+    "mode": "choice",
+    "collection_id": "col_…",
+    "question": "按仿真规范，仿真结束时沙漏能占总能量比的上限是多少？",
+    "options": {"A": "2.8%", "B": "4.2%", "C": "0.8%", "D": "5.0%"}
+  }'
+```
+
+- `options` 必填：**恰好 A/B/C/D 四个键**，值为选项文本（各 ≤500 字符）；qa 模式带 options 会被 422 拒绝（防误用被静默忽略）。
+- 响应新增：`"choice": "B"`（判定字母）与 `"abstained": false`；`answer` 为判定理由（含对干扰项的逐项排除）+ 末行 `答案：X`。
+- **弃答语义**：证据无法解析出字母时 `choice=null, abstained=true`，`status` 仍为 `succeeded`（理由在 `answer`）；管线经强提示约束，弃答极少见。
+- 与 `collection_id` 自由组合：对上传的私有文档出选择题即为「他们出题、我们作答」的评测形态。
+- 实测（2026-07-16，qwen3.7-max，私有库）：两道干扰项数值互换的题均判对，**18~26 秒 / 0.7~1 万 tokens**，理由中逐项点明每个干扰项数值在原文中的真实归属。
+- **批量评测参考脚本**：[`examples/evaluate_choice.py`](../../examples/evaluate_choice.py)——读入你自己的题库 JSON（含 gold `answer`），并发调用、429/503 退避、可续跑，结束输出 accuracy 与按字母分桶。
+
 ---
 
 ## 5. answer 资源
@@ -140,6 +182,9 @@ queued ──▶ running ──▶ succeeded
 |---|---|---|
 | `id` | string | `ans_` + 16 hex；资源标识 |
 | `status` | enum | `queued` / `running` / `succeeded` / `failed` |
+| `mode` | enum | `qa` / `choice` |
+| `choice` | string \| null | choice 模式的判定字母 A/B/C/D；弃答或 qa 模式为 null |
+| `abstained` | bool \| null | choice 模式证据不足以判定字母时为 true（status 仍 succeeded） |
 | `answer` | string \| null | 终答（Markdown）；仅 `succeeded` 非空 |
 | `sources` | array | **实际打开阅读过**的文档（仅在检索列表出现过的候选不计入——引用是诚实的） |
 | `usage.iterations` | int | agent 检索↔阅读回环轮数（上限 15） |
@@ -204,7 +249,7 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 
 ### 7.3 约束与语义
 
-- **格式**：`.md` / `.markdown`，严格 UTF-8；单文件 ≤ 2 MB。
+- **格式**：`.md` / `.markdown`，严格 UTF-8；单文件 ≤ 10 MB。
 - **限额**（可由运营方调整）：每 key ≤ 10 个 collection；每 collection ≤ 50 篇文档。
 - **摄取是异步的**：上传返回 202 + `status=processing`；实测 815 字节文档约 15 秒 ready（含真实 LLM 富集）。轮询节奏同 §4.2 异步纪律。
 - **隔离**：collection 只对创建它的 API key 可见；其他 key 访问一律 404（不泄露存在性）。
@@ -242,6 +287,7 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 | `collection_limit` | 422 | 超出 collection 数（10/key）或文档数（50/库）限额 | 删除旧库或联系运营方 |
 | `collection_not_ready` | 409 | 对无 ready 文档的知识库提问 | 等文档 ready 后重试 |
 | `not_found` | 404 | answer id 不存在或已过 TTL；doc_id 不存在；路径不存在 | 勿重试 |
+| `payload_too_large` | 413 | 请求体超过 110 MB 上限 | 分批上传 |
 | `rate_limited` | 429 | 超出速率限制（带 `Retry-After` 头 + `retry_after` 字段） | 按 Retry-After 退避重试 |
 | `queue_full` | 503 | 作答队列饱和（带 `Retry-After: 30`） | 退避重试 |
 | `not_ready` | 503 | 服务启动中/引擎异常（带 `Retry-After: 10`） | 退避重试 |
@@ -293,7 +339,8 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 
 - 每个响应带 `X-Request-ID`（可传入自定义值透传，`[A-Za-z0-9_-]{1,64}`）与 `X-Response-Time-Ms`。排障时提供 `request_id` 即可对账到服务端日志。
 - `GET /metrics`（Prometheus 文本）：`deepreadqa_http_requests_total{method,path,status}`、`deepreadqa_answers_finished_total{status}`、`deepreadqa_answer_latency_seconds`（直方图，桶 1~600s）、`deepreadqa_queue_depth`。
-- 隐私：访问日志**不记录问题与答案正文**，仅方法/路由/状态/耗时/request_id。
+- 访问日志（运维日志）只记方法/路由/状态/耗时/request_id，不含正文。
+- **数据留存**：为保障服务质量、排查问题与防范滥用，**请求与响应内容（问题、上传文档、作答结果）可能被服务端留存**。请勿提交涉密或不希望被留存的内容。（此为试用环境的标准条款，与商用 LLM API 的数据使用政策一致。）
 
 ## 14. 部署与配置
 
@@ -314,7 +361,10 @@ python3 -m deepreadqa_api --host 0.0.0.0 --port 8000
 | `DEEPREADQA_RATE_LIMIT_RPM` / `_BURST` | 10 / 5 | 每 key 限流 |
 | `DEEPREADQA_MAX_QUESTION_CHARS` | 2000 | 问题长度上限 |
 | `DEEPREADQA_COLLECTIONS_DIR` | `store/collections` | 私有知识库存放目录（每库一个 SQLite） |
-| `DEEPREADQA_MAX_UPLOAD_BYTES` | 2000000 | 单文件上传上限 |
+| `DEEPREADQA_MAX_UPLOAD_BYTES` | 10000000 | 单文件上传上限 |
+| `DEEPREADQA_MAX_BODY_BYTES` | 110000000 | 请求体总量上限（超出 413） |
+| `DEEPREADQA_QUERY_LOG_PATH` | 空（关闭） | 内容留存 JSONL 路径；设值即开启 |
+| `DEEPREADQA_QUERY_LOG_MAX_BYTES` / `_BACKUPS` | 50MB / 5 | 留存文件轮转大小与保留份数 |
 | `DEEPREADQA_MAX_DOCS_PER_COLLECTION` / `_MAX_COLLECTIONS_PER_KEY` | 50 / 10 | 限额 |
 | `DEEPREADQA_INGEST_WORKERS` | 1 | 摄取线程数 |
 | `AIBERM_API_KEY` 等 | 见引擎 `.env` | 上游 LLM 凭证（主备端点自动失效转移） |
@@ -345,7 +395,7 @@ WantedBy=multi-user.target
 
 - Bearer key 常数时间比较；401/403 不泄露 key 存在性。
 - 服务只读访问知识库（SQLite read-only 连接）；无任何写入/上传面。
-- 错误响应不含堆栈；日志不含正文与凭证。
+- 错误响应不含堆栈；运维日志不含正文与凭证（内容留存见 §13 可观测性的数据留存说明）。
 - 服务本身不做 TLS——生产请置于反向代理/网关之后。
 - 不内置 CORS（服务器间 API）；浏览器直连场景请在网关层按需放行。
 
@@ -360,6 +410,7 @@ WantedBy=multi-user.target
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-07-16 | 1.2.0 | 选择题模式 `mode=choice`（逐项证伪 + 结构化 `choice` 字母，可与私有知识库组合）；新增使用须知章节；请求体 110MB 上限（413）与上传内存加固 |
 | 2026-07-15 | 1.1.1 | 作答模型切换为 `qwen3.7-max`（主备双端点自动失效转移）；文档内性能数字按新模型重测更新 |
 | 2026-07-10 | 1.1.0 | 私有知识库（collections）：上传 markdown 建库、摄取状态轮询、`collection_id` 作答；新错误码 `upload_rejected`/`collection_limit`/`collection_not_ready` |
 | 2026-07-09 | 1.0.0 | 首个公开版本：同步/异步作答、幂等、限流、problem+json 错误模型、目录端点、探针与指标 |

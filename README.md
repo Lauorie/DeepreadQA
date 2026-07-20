@@ -374,5 +374,5 @@ python3 -m deepreadqa_api --port 8000     # 生产库 store/cae_vlmocr.db，约 
 - **在线文档页**：`http://8.216.129.125:8000/`（服务自托管，`docs/api/index.html`）
 - **完整手册**：[`docs/api/API.md`](docs/api/API.md)（端点参考、错误码表、重试指北、部署、真实性能测量）
 - **机读契约**：[`docs/api/openapi.json`](docs/api/openapi.json)（`scripts/export_openapi.py` 再生）· 在线 Swagger：`GET /docs`
-- **客户端示例**：[`examples/ask.sh`](examples/ask.sh)、[`examples/client.py`](examples/client.py)（异步轮询 + 退避 + 幂等重试模板）
-- 测试：`tests/test_api_*.py` 48 项（认证/校验/同步/异步/幂等/限流/队列满/错误模型/探针/目录）
+- **客户端示例**：[`examples/ask.sh`](examples/ask.sh)、[`examples/client.py`](examples/client.py)（异步轮询 + 退避 + 幂等重试模板）、[`examples/evaluate_choice.py`](examples/evaluate_choice.py)（选择题批量评测）
+- 测试：`tests/test_api_*.py` 93 项（认证/校验/同步/异步/幂等/限流/队列满/错误模型/探针/目录）

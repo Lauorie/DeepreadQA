@@ -170,3 +170,21 @@ def test_restart_recovers_registry_and_marks_orphans(tmp_path):
     lost = m2.document("k1", cid, "lost.md")
     assert lost["status"] == "failed" and "interrupt" in lost["error"]
     m2.shutdown()
+
+
+def test_start_tolerates_malformed_db(tmp_path):
+    # a stray 0-byte / schema-less col_*.db must NOT crash startup — one bad
+    # collection file cannot be allowed to take down the whole service
+    m = _mgr(tmp_path)
+    good = m.create("k1", "good-one")
+    m.shutdown()
+
+    # drop a malformed db next to the good one (0 bytes, no tables)
+    (tmp_path / "cols" / "col_deadbeef.db").write_bytes(b"")
+
+    m2 = CollectionManager(_cfg(tmp_path), enricher_factory=_StubEnricher)
+    m2.start()  # must not raise
+    # the good collection still loaded; the bad one is skipped
+    assert m2.get("k1", good["id"]) is not None
+    assert m2.get("k1", "col_deadbeef") is None
+    m2.shutdown()

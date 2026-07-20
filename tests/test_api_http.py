@@ -321,3 +321,103 @@ def test_root_serves_docs_page_without_auth():
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/html")
         assert "DeepreadQA API" in r.text
+
+
+# -- choice mode ---------------------------------------------------------------
+
+OPTS = {"A": "2.8%", "B": "4.2%", "C": "0.8%", "D": "5.0%"}
+
+
+def test_choice_requires_options():
+    with _client() as c:
+        _wait_ready(c)
+        r = c.post("/v1/answers", json={"question": "q", "mode": "choice"},
+                   headers=AUTH)
+        assert r.status_code == 422
+        assert "options" in r.json()["detail"]
+
+
+def test_choice_rejects_wrong_option_keys():
+    with _client() as c:
+        _wait_ready(c)
+        r = c.post("/v1/answers",
+                   json={"question": "q", "mode": "choice",
+                         "options": {"A": "1", "B": "2", "E": "3"}},
+                   headers=AUTH)
+        assert r.status_code == 422
+
+
+def test_qa_mode_with_options_is_rejected():
+    with _client() as c:
+        _wait_ready(c)
+        r = c.post("/v1/answers",
+                   json={"question": "q", "options": OPTS}, headers=AUTH)
+        assert r.status_code == 422
+        assert "mode" in r.json()["detail"]
+
+
+def test_choice_success_shape():
+    from tests.test_api_engine import _FakeChoiceQA
+
+    fake = _FakeChoiceQA(letter="B")
+
+    def factory(db_path=None, index=None, mode="qa"):
+        return fake if mode == "choice" else _FakeQA()
+
+    cfg = _cfg()
+    engine = AnswerEngine(cfg, qa_factory=factory, catalog=CATALOG)
+    with TestClient(create_app(cfg, engine=engine),
+                    raise_server_exceptions=False) as c:
+        _wait_ready(c)
+        r = c.post("/v1/answers",
+                   json={"question": "沙漏能阈值？", "mode": "choice",
+                         "options": OPTS}, headers=AUTH)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["mode"] == "choice"
+        assert body["choice"] == "B"
+        assert body["abstained"] is False
+        assert "答案：B" in body["answer"]
+        assert fake.seen_args == ("沙漏能阈值？", OPTS)
+
+
+def test_body_too_large_413():
+    with _client(_cfg(max_body_bytes=1000)) as c:
+        _wait_ready(c)
+        r = c.post("/v1/answers", json={"question": "x" * 5000}, headers=AUTH)
+        assert r.status_code == 413
+        assert r.json()["code"] == "payload_too_large"
+
+
+# -- query retention -----------------------------------------------------------
+
+def test_query_log_captures_question_and_answer(tmp_path):
+    import json as _json
+
+    log_path = tmp_path / "q.jsonl"
+    cfg = _cfg(query_log_path=str(log_path))
+    engine = AnswerEngine(cfg, qa_factory=lambda *a: _FakeQA(), catalog=CATALOG)
+    with TestClient(create_app(cfg, engine=engine),
+                    raise_server_exceptions=False) as c:
+        _wait_ready(c)
+        c.post("/v1/answers", json={"question": "他们测了啥？"}, headers=AUTH)
+        deadline = time.time() + 5
+        while time.time() < deadline and not log_path.exists():
+            time.sleep(0.02)
+        rec = _json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
+        assert rec["question"] == "他们测了啥？"
+        assert rec["answer"] == "答案文本"
+        assert rec["api_key_hash"] and len(rec["api_key_hash"]) == 16
+        assert rec["mode"] == "qa"
+
+
+def test_query_log_disabled_by_default(tmp_path):
+    # default config has no query_log_path -> recorder never attached
+    cfg = _cfg()
+    engine = AnswerEngine(cfg, qa_factory=lambda *a: _FakeQA(), catalog=CATALOG)
+    with TestClient(create_app(cfg, engine=engine),
+                    raise_server_exceptions=False) as c:
+        _wait_ready(c)
+        r = c.post("/v1/answers", json={"question": "q"}, headers=AUTH)
+        assert r.status_code == 200  # works fine, just no retention
+    assert not list(tmp_path.glob("*.jsonl"))

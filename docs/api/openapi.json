@@ -7,7 +7,7 @@
       "name": "DeepreadQA operator",
       "email": "support@atominfinite.ai"
     },
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "paths": {
     "/healthz": {
@@ -1090,7 +1090,7 @@
             "type": "string",
             "minLength": 1,
             "title": "Question",
-            "description": "面向知识库的自然语言问题（中文或英文）"
+            "description": "面向知识库的自然语言问题（中文或英文）；choice 模式下为题干（选项放 options）"
           },
           "collection_id": {
             "anyOf": [
@@ -1103,6 +1103,39 @@
             ],
             "title": "Collection Id",
             "description": "私有知识库 id（col_…）；缺省 = 内置 CAE 知识库"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "qa",
+              "choice"
+            ],
+            "title": "Mode",
+            "description": "qa = 开放式问答；choice = 四选一选择题（逐项证伪干扰项，返回结构化选项字母）",
+            "default": "qa"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options",
+            "description": "choice 模式必填：恰好 A/B/C/D 四个键，值为各选项文本",
+            "examples": [
+              {
+                "A": "2.8%",
+                "B": "4.2%",
+                "C": "0.8%",
+                "D": "5.0%"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1176,6 +1209,39 @@
             ],
             "title": "Collection Id",
             "description": "作答所用私有知识库；null = 内置 CAE 库"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "qa",
+              "choice"
+            ],
+            "title": "Mode",
+            "default": "qa"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice",
+            "description": "choice 模式的判定字母 A/B/C/D；弃答或 qa 模式为 null"
+          },
+          "abstained": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstained",
+            "description": "choice 模式：证据不足以解析出字母时为 true（status 仍为 succeeded，理由在 answer）"
           },
           "answer": {
             "anyOf": [

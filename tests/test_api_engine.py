@@ -151,7 +151,7 @@ def test_catalog_accessors():
 def test_collection_job_routes_through_factory_with_bundle():
     calls = []
 
-    def factory(db_path=None, index=None):
+    def factory(db_path=None, index=None, mode="qa"):
         calls.append((db_path, index))
         return _FakeQA()
 
@@ -171,4 +171,125 @@ def test_collection_job_routes_through_factory_with_bundle():
     # titles resolve from the collection snapshot, not the builtin catalog
     assert job.sources[0] == {"doc_id": "hjc.md", "title": "上传的 HJC 文档"}
     assert job.to_resource()["collection_id"] == "col_ab"
+    eng.shutdown()
+
+
+class _FakeChoiceQA:
+    """Mimics ChoiceQA: same tool_calls/seen_docs shape, letter answer."""
+
+    def __init__(self, letter="B", abstained=False, error=None):
+        base = _result()
+        self._res = SimpleNamespace(
+            answer=letter, compose_text=f"证据支持 {letter}。\n答案：{letter}",
+            draft="draft", iterations=2, total_tokens=456, compactions=0,
+            forced_final=False, abstained=abstained, error=error,
+            tool_calls=base.tool_calls, seen_docs=base.seen_docs)
+
+    def answer_choice(self, question, options):
+        self.seen_args = (question, options)
+        return self._res
+
+
+def test_choice_job_maps_letter_and_calls_answer_choice():
+    seen_modes = []
+    fake = _FakeChoiceQA()
+
+    def factory(db_path=None, index=None, mode="qa"):
+        seen_modes.append(mode)
+        return fake if mode == "choice" else _FakeQA()
+
+    eng = AnswerEngine(_cfg(), qa_factory=factory, catalog=CATALOG)
+    eng.start()
+    assert eng.wait_ready(timeout=5)
+    store = JobStore(ttl_s=60)
+    job, _ = store.create("哪项正确？")
+    job.mode = "choice"
+    job.options = {"A": "甲", "B": "乙", "C": "丙", "D": "丁"}
+    eng.submit(job)
+    assert job.done.wait(timeout=5)
+    assert job.status == "succeeded"
+    assert fake.seen_args == ("哪项正确？", job.options)
+    assert job.choice == "B" and job.abstained is False
+    assert "答案：B" in job.answer
+    assert job.usage["total_tokens"] == 456
+    res = job.to_resource()
+    assert res["mode"] == "choice" and res["choice"] == "B"
+    assert "choice" in seen_modes
+    eng.shutdown()
+
+
+def test_choice_abstain_without_error_succeeds_with_null_choice():
+    fake = _FakeChoiceQA(letter="", abstained=True)
+    eng = AnswerEngine(_cfg(), qa_factory=lambda *a, **k: fake, catalog=CATALOG)
+    eng.start()
+    assert eng.wait_ready(timeout=5)
+    store = JobStore(ttl_s=60)
+    job, _ = store.create("q")
+    job.mode = "choice"
+    job.options = {"A": "1", "B": "2", "C": "3", "D": "4"}
+    eng.submit(job)
+    assert job.done.wait(timeout=5)
+    assert job.status == "succeeded"
+    assert job.choice is None and job.abstained is True
+    eng.shutdown()
+
+
+def test_choice_error_with_abstain_fails():
+    fake = _FakeChoiceQA(letter="", abstained=True, error="all endpoints down")
+    eng = AnswerEngine(_cfg(), qa_factory=lambda *a, **k: fake, catalog=CATALOG)
+    eng.start()
+    assert eng.wait_ready(timeout=5)
+    store = JobStore(ttl_s=60)
+    job, _ = store.create("q")
+    job.mode = "choice"
+    job.options = {"A": "1", "B": "2", "C": "3", "D": "4"}
+    eng.submit(job)
+    assert job.done.wait(timeout=5)
+    assert job.status == "failed"
+    assert "all endpoints down" in job.error["message"]
+    eng.shutdown()
+
+
+def test_qa_mode_resource_has_null_choice_fields():
+    eng = _engine(_cfg(), _FakeQA())
+    store = JobStore(ttl_s=60)
+    job = _run(eng, store)
+    res = job.to_resource()
+    assert res["mode"] == "qa" and res["choice"] is None
+    assert res["abstained"] is None
+    eng.shutdown()
+
+
+def test_recorder_called_for_finished_job():
+    recorded = []
+
+    class _Rec:
+        def record(self, job, resource):
+            recorded.append((job.id, resource["question"], resource["answer"]))
+
+    eng = AnswerEngine(_cfg(), qa_factory=lambda *a: _FakeQA(), catalog=CATALOG)
+    eng.attach_recorder(_Rec())
+    eng.start()
+    assert eng.wait_ready(timeout=5)
+    store = JobStore(ttl_s=60)
+    job = _run(eng, store, question="记录我")
+    assert recorded == [(job.id, "记录我", "答案文本")]
+    eng.shutdown()
+
+
+def test_recorder_called_even_when_job_fails():
+    recorded = []
+
+    class _Rec:
+        def record(self, job, resource):
+            recorded.append((resource["status"], resource["error"]))
+
+    eng = AnswerEngine(_cfg(), qa_factory=lambda *a: _FakeQA(exc=RuntimeError("boom")),
+                       catalog=CATALOG)
+    eng.attach_recorder(_Rec())
+    eng.start()
+    assert eng.wait_ready(timeout=5)
+    store = JobStore(ttl_s=60)
+    _run(eng, store)
+    assert len(recorded) == 1 and recorded[0][0] == "failed"
     eng.shutdown()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -17,8 +18,37 @@ router = APIRouter(prefix="/v1", tags=["answers"])
 _IDEMPOTENCY_KEY_MAX = 128
 
 
+def _key_hash(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+
+
 def _location(job: Job) -> str:
     return f"/v1/answers/{job.id}"
+
+
+_OPTION_KEYS = {"A", "B", "C", "D"}
+_OPTION_TEXT_MAX = 500
+
+
+def _validate_options(payload: AnswerCreateRequest) -> None:
+    if payload.mode != "choice":
+        if payload.options is not None:
+            raise ApiError("invalid_request", 422,
+                           "options is only valid with mode='choice'")
+        return
+    opts = payload.options
+    if not isinstance(opts, dict) or set(opts) != _OPTION_KEYS:
+        raise ApiError("invalid_request", 422,
+                       "choice mode requires options with exactly the keys "
+                       "A, B, C, D")
+    for key, text in opts.items():
+        if not isinstance(text, str) or not text.strip():
+            raise ApiError("invalid_request", 422,
+                           f"option {key!r} must be a non-empty string")
+        if len(text) > _OPTION_TEXT_MAX:
+            raise ApiError("invalid_request", 422,
+                           f"option {key!r} exceeds {_OPTION_TEXT_MAX} "
+                           "characters")
 
 
 def _validate(request: Request, payload: AnswerCreateRequest) -> tuple[str, str | None]:
@@ -31,6 +61,7 @@ def _validate(request: Request, payload: AnswerCreateRequest) -> tuple[str, str 
             "invalid_request", 422,
             f"question exceeds {cfg.max_question_chars} characters "
             f"(got {len(question)})")
+    _validate_options(payload)
     idem_key = request.headers.get("Idempotency-Key")
     if idem_key is not None and len(idem_key) > _IDEMPOTENCY_KEY_MAX:
         raise ApiError("invalid_request", 422,
@@ -56,15 +87,19 @@ def _resolve_collection(request: Request, api_key: str,
     return bundle
 
 
-def _create_job(request: Request, question: str, idem_key: str | None,
-                collection_id: str | None, bundle: tuple | None) -> Job:
+def _create_job(request: Request, payload: AnswerCreateRequest,
+                question: str, idem_key: str | None,
+                bundle: tuple | None, api_key: str) -> Job:
     store = request.app.state.job_store
     engine = request.app.state.engine
     job, created = store.create(question, idempotency_key=idem_key)
     if not created:
         return job
+    job.mode = payload.mode
+    job.options = payload.options
+    job.api_key_hash = _key_hash(api_key)
     if bundle is not None:
-        job.collection_id = collection_id
+        job.collection_id = payload.collection_id
         job.collection_db, job.collection_index, job.collection_titles, _ = bundle
     try:
         engine.submit(job)
@@ -107,8 +142,7 @@ async def create_answer(payload: AnswerCreateRequest, request: Request,
                        extra={"retry_after": seconds})
 
     bundle = _resolve_collection(request, api_key, payload.collection_id)
-    job = _create_job(request, question, idem_key, payload.collection_id,
-                      bundle)
+    job = _create_job(request, payload, question, idem_key, bundle, api_key)
 
     if "respond-async" in request.headers.get("Prefer", ""):
         if not job.done.is_set():

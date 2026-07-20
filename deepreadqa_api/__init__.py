@@ -1,5 +1,5 @@
 """DeepreadQA HTTP API: production-grade service surface over the QA engine."""
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 from .config import ApiConfig  # noqa: E402 - __version__ must precede app imports
 

@@ -88,7 +88,15 @@ async def upload_documents(cid: str, request: Request,
                                ..., description="一个或多个 .md/.markdown 文件"),
                            api_key: str = Depends(require_api_key)) -> dict:
     _rate_limit(request, api_key)
-    payload = [(f.filename or "", await f.read()) for f in files]
+    cfg = request.app.state.api_cfg
+    # count first, and read each file with a hard bound — a huge multipart
+    # must never be buffered wholesale into memory before validation
+    if len(files) > cfg.max_docs_per_collection:
+        raise ApiError("collection_limit", 422,
+                       f"too many files in one request: {len(files)} "
+                       f"(limit {cfg.max_docs_per_collection} per collection)")
+    payload = [(f.filename or "", await f.read(cfg.max_upload_bytes + 1))
+               for f in files]
     try:
         out = _manager(request).upload(api_key, cid, payload)
     except UploadRejected as exc:

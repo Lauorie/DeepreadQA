@@ -41,18 +41,29 @@ class Job:
     collection_db: Optional[str] = None
     collection_index: Any = None
     collection_titles: Optional[dict[str, str]] = None
+    # multiple-choice mode: options are the A-D texts; choice/abstained are
+    # filled by the worker (abstain without engine error is still a success)
+    mode: str = "qa"
+    options: Optional[dict[str, str]] = None
+    choice: Optional[str] = None
+    abstained: Optional[bool] = None
+    api_key_hash: Optional[str] = None  # for query-log attribution
 
     def mark_running(self, now: float) -> None:
         self.status = "running"
         self.started_at = now
 
     def succeed(self, *, answer: str, sources: list[dict],
-                usage: Optional[dict], forced_final: bool, now: float) -> None:
+                usage: Optional[dict], forced_final: bool, now: float,
+                choice: Optional[str] = None,
+                abstained: Optional[bool] = None) -> None:
         self.status = "succeeded"
         self.answer = answer
         self.sources = sources
         self.usage = usage
         self.forced_final = forced_final
+        self.choice = choice
+        self.abstained = abstained
         self.finished_at = now
         self.done.set()
 
@@ -72,6 +83,9 @@ class Job:
             "status": self.status,
             "question": self.question,
             "collection_id": self.collection_id,
+            "mode": self.mode,
+            "choice": self.choice,
+            "abstained": self.abstained,
             "answer": self.answer,
             "sources": self.sources,
             "usage": self.usage,

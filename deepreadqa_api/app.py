@@ -17,6 +17,7 @@ from .errors import install_handlers
 from .jobs import JobStore
 from .metrics import Metrics
 from .middleware import RequestContextMiddleware
+from .querylog import QueryLog
 from .ratelimit import TokenBucket
 from .routes import answers, collections, documents, system
 
@@ -50,6 +51,11 @@ def create_app(cfg: Optional[ApiConfig] = None,
     engine = engine or AnswerEngine(cfg)
     engine.attach_metrics(metrics)
     manager = collections_manager or CollectionManager(cfg)
+    if cfg.query_log_path:
+        engine.attach_recorder(QueryLog(
+            cfg.query_log_path, max_bytes=cfg.query_log_max_bytes,
+            backups=cfg.query_log_backups))
+        logger.info("query retention enabled -> %s", cfg.query_log_path)
     metrics.register_gauge("deepreadqa_queue_depth",
                            "answer jobs waiting in the queue",
                            lambda: float(engine.queue_depth))
@@ -87,7 +93,8 @@ def create_app(cfg: Optional[ApiConfig] = None,
                            if docs_file.is_file() else None)
 
     install_handlers(app)
-    app.add_middleware(RequestContextMiddleware, metrics=metrics)
+    app.add_middleware(RequestContextMiddleware, metrics=metrics,
+                       max_body_bytes=cfg.max_body_bytes)
     app.include_router(system.router)
     app.include_router(answers.router)
     app.include_router(collections.router)

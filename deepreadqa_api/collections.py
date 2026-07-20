@@ -92,18 +92,26 @@ class CollectionManager:
         self._dir.mkdir(parents=True, exist_ok=True)
         for db in sorted(self._dir.glob("col_*.db")):
             cid = db.stem
-            conn = store.connect(db)
-            owner = store.get_meta(conn, "api:owner")
-            if owner is None:
-                conn.close()
-                continue
-            self._registry[cid] = {
-                "owner": owner,
-                "name": store.get_meta(conn, "api:name") or cid,
-                "created_at": float(store.get_meta(conn, "api:created_at") or 0),
-            }
-            self._recover_orphans(conn)
-            conn.close()
+            conn = None
+            try:
+                conn = store.connect(db)
+                owner = store.get_meta(conn, "api:owner")
+                if owner is None:
+                    continue
+                self._registry[cid] = {
+                    "owner": owner,
+                    "name": store.get_meta(conn, "api:name") or cid,
+                    "created_at": float(
+                        store.get_meta(conn, "api:created_at") or 0),
+                }
+                self._recover_orphans(conn)
+            except Exception as exc:  # noqa: BLE001 - one bad file must never
+                # crash-loop the whole service; skip it and keep serving
+                logger.error("skipping malformed collection db %s: %s", db, exc)
+                self._registry.pop(cid, None)
+            finally:
+                if conn is not None:
+                    conn.close()
         for i in range(self._cfg.ingest_workers):
             th = threading.Thread(target=self._ingest_loop,
                                   name=f"ingest-{i}", daemon=True)

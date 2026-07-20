@@ -224,7 +224,7 @@
     <p>渐进式阅读 AgenticRAG 问答服务：对 226 篇 CAE/仿真知识库提问，系统检索、逐章精读后返回<strong>带真实阅读来源</strong>的答案。本页所有响应示例与性能数字均来自对生产库的真实调用。</p>
   </div>
   <div class="tb-grid">
-    <div class="tb-cell"><span class="k">版本</span><span class="v">1.1.1</span></div>
+    <div class="tb-cell"><span class="k">版本</span><span class="v">1.2.0</span></div>
     <div class="tb-cell"><span class="k">API</span><span class="v">v1</span></div>
     <div class="tb-cell"><span class="k">协议</span><span class="v">OpenAPI 3.1</span></div>
     <div class="tb-cell"><span class="k">作答模型</span><span class="v">qwen3.7-max</span></div>
@@ -238,7 +238,7 @@
                                                           ▲
                        GET /v1/answers/{id} 轮询 ──────────┘</div>
 
-<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/answers</span><div class="desc">创建一次作答：默认同步等待；<code>Prefer: respond-async</code> 立即受理转轮询</div></div>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/answers</span><div class="desc">创建一次作答（开放式问答，或 <code>mode=choice</code> 四选一选择题）：默认同步等待；<code>Prefer: respond-async</code> 立即受理转轮询</div></div>
 <div class="endpoint"><span class="method get">GET</span><span class="path">/v1/answers/{answer_id}</span><div class="desc">查询作答状态与结果（资源保留 1 小时）</div></div>
 <div class="endpoint"><span class="method post">POST</span><span class="path">/v1/collections…</span><div class="desc">私有知识库：上传你自己的 markdown 并对其问答（详见 §7）</div></div>
 <div class="endpoint"><span class="method get">GET</span><span class="path">/v1/documents · /v1/documents/{doc_id}</span><div class="desc">知识库目录：分页列表与单篇章节视图（只读，不含正文）</div></div>
@@ -254,6 +254,7 @@ curl -sS -m 360 "$BASE_URL/v1/answers" \
   -H "Authorization: Bearer $DEEPREADQA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"question": "HJC 本构模型模拟混凝土受冲击时主要考虑哪些效应？"}'</code></pre>
+<div class="callout warn"><strong>使用须知与限制（服务端强制）</strong>：单文件 ≤ 10 MB · 每库 ≤ 50 篇 · 每 key ≤ 10 库 · 单次请求 ≤ 50 文件 · 请求体 ≤ 110 MB（超出 413）；作答与上传共享每 key <strong>10 次/分钟</strong>限流；同时最多 <strong>2 个作答</strong>在执行、队列 16，满则 503 + Retry-After。约定：不要一次投喂上千文档（会被直接拒绝，语料大请分批或联系运营方调限额）；摄取是排队的（每篇 ~15s-1min），轮询状态即可，不要重复上传；批量评测串行或 ≤2 并发，收到 429/503 按 Retry-After 退避，重试务必带同一 Idempotency-Key；HTTP 明文试用勿传敏感文档，内容会发送至上游 LLM；answer 结果保留 1 小时，请及时取回。</div>
 <p>可直接运行的集成模板：仓库内 <code>examples/ask.sh</code>（curl）与 <code>examples/client.py</code>（httpx，异步轮询 + 指数退避 + 幂等重试，推荐）。交互式调试打开 <code>GET /docs</code>（Swagger UI）。</p>
 
 <h2 id="auth"><span class="no">3</span>认证</h2>
@@ -272,6 +273,19 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 <h3>4.4 状态机</h3>
 <div class="flow">queued ─▶ running ─▶ succeeded
                 └────▶ failed        （终态资源保留 1h 后 404）</div>
+
+<h3>4.5 选择题模式（mode=choice）</h3>
+<p>四选一选择题走专用管线：综合题干与选项术语检索，<strong>对每个选项逐项在证据中确证/证伪</strong>（干扰项常靠篡改一个数字或限定词），返回结构化字母。与 <code>collection_id</code> 自由组合——对上传的私有文档出选择题即为「你出题、系统作答」的评测形态。</p>
+<pre><code>curl -sS -m 360 "$BASE_URL/v1/answers" \
+  -H "Authorization: Bearer $DEEPREADQA_API_KEY" -H "Content-Type: application/json" \
+  -d '{
+    "mode": "choice",
+    "collection_id": "col_…",
+    "question": "按仿真规范，仿真结束时沙漏能占总能量比的上限是多少？",
+    "options": {"A": "2.8%", "B": "4.2%", "C": "0.8%", "D": "5.0%"}
+  }'</code></pre>
+<p><code>options</code> 必填且键恰为 A/B/C/D（各 ≤500 字符）；qa 模式带 options → 422（防误用静默忽略）。响应新增 <code>"choice": "B"</code> 与 <code>"abstained"</code>；<code>answer</code> 为判定理由 + 末行 <code>答案：X</code>。弃答（choice=null, abstained=true）时 status 仍为 succeeded，极少见。</p>
+<div class="callout"><strong>实测（2026-07-16，qwen3.7-max，私有库）</strong>：两道干扰项数值互换的选择题均判对，<strong>18~26 秒 / 0.7~1 万 tokens</strong>，理由中逐项点明每个干扰项数值在原文中的真实归属。批量评测参考脚本见仓库 <code>examples/evaluate_choice.py</code>（读题库 JSON、并发+退避+续跑、输出 accuracy）。</div>
 <p>请求体约束：<code>question</code> 必填，去空白后 1~2000 字符；<strong>未知字段一律 422 拒绝</strong>（防拼写错误静默失效）。</p>
 
 <h2 id="resource"><span class="no">5</span>answer 资源</h2>
@@ -296,6 +310,7 @@ Location: /v1/answers/ans_b334abda0a151fb4</code></pre>
 <div class="tablewrap"><table>
 <tr><th>字段</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>status</code></td><td>enum</td><td><code>queued / running / succeeded / failed</code></td></tr>
+<tr><td><code>mode</code> / <code>choice</code> / <code>abstained</code></td><td>—</td><td>选择题模式的判定字母与弃答标记（qa 模式为 null，见 §4.5）</td></tr>
 <tr><td><code>answer</code></td><td>string | null</td><td>终答（Markdown）；仅 succeeded 非空</td></tr>
 <tr><td><code>sources</code></td><td>array</td><td><strong>实际打开阅读过</strong>的文档——仅在检索列表出现的候选不计入，引用是诚实的</td></tr>
 <tr><td><code>usage</code></td><td>object</td><td>迭代轮数（上限 15）、token 总消耗、记忆压缩次数、精读/候选文档数</td></tr>
@@ -332,7 +347,7 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 <tr><td><span class="method get">GET</span></td><td class="mono">…/documents · …/documents/{doc_id}</td><td>文档列表 / 单文档摄取状态（ready 后含 title/tldr/token 数）</td></tr>
 <tr><td>DELETE</td><td class="mono">/v1/collections/{cid}</td><td>删除（含全部文档，不可恢复）→ 204</td></tr>
 </table></div>
-<p><code>POST /v1/answers</code> 增加可选字段 <code>collection_id</code>（缺省 = 内置 CAE 库）。约束：<code>.md/.markdown</code>、严格 UTF-8、单文件 ≤ 2 MB；每 key ≤ 10 库、每库 ≤ 50 篇；collection 只对创建它的 key 可见（他人 404）；上传与作答共享限流桶；文档与状态落盘、重启不丢（摄取中断的文档标 failed，重传即可）。</p>
+<p><code>POST /v1/answers</code> 增加可选字段 <code>collection_id</code>（缺省 = 内置 CAE 库）。约束：<code>.md/.markdown</code>、严格 UTF-8、单文件 ≤ 10 MB；每 key ≤ 10 库、每库 ≤ 50 篇；collection 只对创建它的 key 可见（他人 404）；上传与作答共享限流桶；文档与状态落盘、重启不丢（摄取中断的文档标 failed，重传即可）。</p>
 <div class="callout"><strong>实测（2026-07-15）</strong>：上传 815 字节内部仿真规范 → <strong>15 秒</strong> ready（含真实 LLM 富集）→ 提问阈值类问题 → <strong>43.3 秒 / 10,211 tokens</strong>，答案逐字命中文档独有数值（4.2% / 2.8% / IHQ=4 / QM=0.03），<code>sources</code> 精确指向上传文档——证明作答扎根于上传内容而非模型参数知识。</div>
 
 <h2 id="errors"><span class="no">8</span>错误模型</h2>
@@ -354,6 +369,7 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 <tr><td><code>collection_limit</code></td><td><span class="pill s4">422</span></td><td>超出 collection（10/key）或文档（50/库）限额</td><td>删除旧库或联系运营方</td></tr>
 <tr><td><code>collection_not_ready</code></td><td><span class="pill s4">409</span></td><td>对无 ready 文档的知识库提问</td><td>等文档 ready 后重试</td></tr>
 <tr><td><code>not_found</code></td><td><span class="pill s4">404</span></td><td>answer id 不存在或已过 TTL；doc_id / 路径不存在</td><td>勿重试</td></tr>
+<tr><td><code>payload_too_large</code></td><td><span class="pill s4">413</span></td><td>请求体超过 110 MB 上限</td><td>分批上传</td></tr>
 <tr><td><code>rate_limited</code></td><td><span class="pill s4">429</span></td><td>超出速率限制（带 <code>Retry-After</code>）</td><td>按 Retry-After 退避重试</td></tr>
 <tr><td><code>queue_full</code></td><td><span class="pill s5">503</span></td><td>作答队列饱和（<code>Retry-After: 30</code>）</td><td>退避重试</td></tr>
 <tr><td><code>not_ready</code></td><td><span class="pill s5">503</span></td><td>服务启动中 / 引擎异常（<code>Retry-After: 10</code>）</td><td>退避重试</td></tr>
@@ -395,7 +411,7 @@ curl -sS -m 360 "$BASE_URL/v1/answers" -H "Authorization: Bearer $DEEPREADQA_API
 </ul>
 
 <h2 id="observability"><span class="no">13</span>可观测性</h2>
-<p>每个响应带 <code>X-Request-ID</code>（可传入自定义值透传）与 <code>X-Response-Time-Ms</code>；排障时提供 request_id 即可对账服务端日志。<code>GET /metrics</code> 输出 Prometheus 文本：请求计数（按方法/路由/状态）、作答终态计数、作答延迟直方图（1~600s 桶）、队列深度。隐私纪律：<strong>访问日志不记录问题与答案正文</strong>。</p>
+<p>每个响应带 <code>X-Request-ID</code>（可传入自定义值透传）与 <code>X-Response-Time-Ms</code>；排障时提供 request_id 即可对账服务端日志。<code>GET /metrics</code> 输出 Prometheus 文本：请求计数（按方法/路由/状态）、作答终态计数、作答延迟直方图（1~600s 桶）、队列深度。运维日志只记方法/路由/状态/耗时/request_id、不含正文；但<strong>请求与响应内容（问题、上传文档、作答结果）可能被服务端留存</strong>，用于服务质量、排障与滥用防范——请勿提交涉密或不希望被留存的内容（此为试用环境标准条款，与商用 LLM API 数据政策一致）。</p>
 
 <h2 id="deploy"><span class="no">14</span>部署与配置</h2>
 <pre><code><span class="cm"># 安装并启动（Python ≥3.10）</span>
@@ -412,7 +428,7 @@ python3 -m deepreadqa_api --host 0.0.0.0 --port 8000</code></pre>
 <tr><td><code>DEEPREADQA_JOB_TTL_S</code></td><td class="num">3600</td><td>answer 资源保留时长</td></tr>
 <tr><td><code>DEEPREADQA_RATE_LIMIT_RPM / _BURST</code></td><td class="num">10 / 5</td><td>每 key 限流</td></tr>
 <tr><td><code>DEEPREADQA_MAX_QUESTION_CHARS</code></td><td class="num">2000</td><td>问题长度上限</td></tr>
-<tr><td><code>DEEPREADQA_COLLECTIONS_DIR</code> 等</td><td class="num">见手册 §14</td><td>私有知识库目录 / 上传上限 2MB / 限额 50 篇·10 库 / 摄取线程数</td></tr>
+<tr><td><code>DEEPREADQA_COLLECTIONS_DIR</code> 等</td><td class="num">见手册 §14</td><td>私有知识库目录 / 上传上限 10MB / 限额 50 篇·10 库 / 摄取线程数</td></tr>
 </table></div>
 <p>探针接法：liveness = <code>/healthz</code>，readiness = <code>/readyz</code>（索引加载完成才放流量）。systemd 单元示例见仓库 <code>docs/api/API.md</code> §13。</p>
 <div class="callout warn"><strong>已知边界（设计取舍，非缺陷）</strong>：answer 资源存储在进程内存——重启丢失未取回的结果，多副本需按 key 会话粘滞。这是单实例试用交付的刻意取舍；需要多副本时把 <code>JobStore</code> 换为 Redis 实现即可（接口已隔离）。</div>
@@ -421,7 +437,7 @@ python3 -m deepreadqa_api --host 0.0.0.0 --port 8000</code></pre>
 <ul>
 <li>Bearer key 常数时间比较（<code>hmac.compare_digest</code>），无时序侧信道。</li>
 <li>服务对知识库<strong>只读</strong>（SQLite read-only 连接），无任何写入/上传面。</li>
-<li>错误响应不含堆栈；日志不含正文与凭证。</li>
+<li>错误响应不含堆栈；运维日志不含正文与凭证（内容留存见「可观测性」章的数据留存说明）。</li>
 <li>服务本身不做 TLS——生产置于反向代理/网关之后；不内置 CORS（服务器间 API）。</li>
 </ul>
 
@@ -434,6 +450,7 @@ python3 -m deepreadqa_api --host 0.0.0.0 --port 8000</code></pre>
 <h2 id="changelog"><span class="no">17</span>变更日志</h2>
 <div class="tablewrap"><table>
 <tr><th>日期</th><th>版本</th><th>变更</th></tr>
+<tr><td class="num">2026-07-16</td><td class="num">1.2.0</td><td>选择题模式 <code>mode=choice</code>（逐项证伪 + 结构化 choice 字母，可与私有知识库组合）；新增使用须知；请求体 110MB 上限与上传内存加固</td></tr>
 <tr><td class="num">2026-07-15</td><td class="num">1.1.1</td><td>作答模型切换为 qwen3.7-max（主备双端点自动失效转移）；文档内全部性能数字按新模型重测更新</td></tr>
 <tr><td class="num">2026-07-10</td><td class="num">1.1.0</td><td>私有知识库（collections）：上传 markdown 建库、摄取状态轮询、<code>collection_id</code> 作答；新错误码 upload_rejected / collection_limit / collection_not_ready</td></tr>
 <tr><td class="num">2026-07-09</td><td class="num">1.0.0</td><td>首个公开版本：同步/异步作答、幂等、限流、RFC 9457 错误模型、目录端点、探针与 Prometheus 指标</td></tr>

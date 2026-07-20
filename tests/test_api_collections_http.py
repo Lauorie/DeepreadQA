@@ -114,7 +114,7 @@ def test_cross_key_collections_are_invisible(tmp_path):
 def test_answer_over_collection(tmp_path):
     seen_factory_args = []
 
-    def factory(db_path=None, index=None):
+    def factory(db_path=None, index=None, mode="qa"):
         seen_factory_args.append(db_path)
         return _FakeQA()
 
@@ -146,7 +146,7 @@ def test_answer_collection_404_and_409(tmp_path):
 def test_answer_without_collection_is_unchanged(tmp_path):
     seen_factory_args = []
 
-    def factory(db_path=None, index=None):
+    def factory(db_path=None, index=None, mode="qa"):
         seen_factory_args.append(db_path)
         return _FakeQA()
 
@@ -162,3 +162,37 @@ def test_openapi_covers_collections(tmp_path):
         paths = c.get("/openapi.json").json()["paths"]
         assert "/v1/collections" in paths
         assert "/v1/collections/{cid}/documents" in paths
+
+
+def test_upload_file_count_checked_before_reading(tmp_path):
+    with _client(tmp_path) as c:
+        cid = _mkcol(c)
+        r = _upload(c, cid, [(f"f{i}.md", MD) for i in range(4)])  # limit 3
+        assert r.status_code == 422
+        assert r.json()["code"] == "collection_limit"
+
+
+def test_choice_over_collection(tmp_path):
+    from tests.test_api_engine import _FakeChoiceQA
+
+    fake = _FakeChoiceQA(letter="D")
+    seen = []
+
+    def factory(db_path=None, index=None, mode="qa"):
+        seen.append((db_path, mode))
+        return fake if mode == "choice" else _FakeQA()
+
+    with _client(tmp_path, factory=factory) as c:
+        cid = _mkcol(c)
+        _upload(c, cid, [("ale.md", MD)])
+        _wait_doc(c, cid, "ale.md")
+        r = c.post("/v1/answers",
+                   json={"question": "PFAC 取多少？", "mode": "choice",
+                         "collection_id": cid,
+                         "options": {"A": "1", "B": "0.5", "C": "0.2", "D": "0.1"}},
+                   headers=AUTH)
+        assert r.status_code == 200, r.text
+        assert r.json()["choice"] == "D"
+        assert r.json()["collection_id"] == cid
+        assert any(db and db.endswith(f"{cid}.db") and m == "choice"
+                   for db, m in seen)

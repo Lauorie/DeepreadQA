@@ -15,10 +15,20 @@ class AnswerCreateRequest(BaseModel):
         "examples": [{"question": "HJC 本构模型模拟混凝土受冲击时主要考虑哪些效应？"}]})
 
     question: str = Field(min_length=1,
-                          description="面向知识库的自然语言问题（中文或英文）")
+                          description="面向知识库的自然语言问题（中文或英文）；"
+                                      "choice 模式下为题干（选项放 options）")
     collection_id: Optional[str] = Field(
         default=None,
         description="私有知识库 id（col_…）；缺省 = 内置 CAE 知识库")
+    mode: Literal["qa", "choice"] = Field(
+        default="qa",
+        description="qa = 开放式问答；choice = 四选一选择题"
+                    "（逐项证伪干扰项，返回结构化选项字母）")
+    options: Optional[dict[str, str]] = Field(
+        default=None,
+        description="choice 模式必填：恰好 A/B/C/D 四个键，值为各选项文本",
+        json_schema_extra={"examples": [
+            {"A": "2.8%", "B": "4.2%", "C": "0.8%", "D": "5.0%"}]})
 
 
 class SourceDoc(BaseModel):
@@ -50,6 +60,13 @@ class AnswerResource(BaseModel):
     question: str
     collection_id: Optional[str] = Field(
         default=None, description="作答所用私有知识库；null = 内置 CAE 库")
+    mode: Literal["qa", "choice"] = "qa"
+    choice: Optional[str] = Field(
+        default=None, description="choice 模式的判定字母 A/B/C/D；"
+                                  "弃答或 qa 模式为 null")
+    abstained: Optional[bool] = Field(
+        default=None, description="choice 模式：证据不足以解析出字母时为 true"
+                                  "（status 仍为 succeeded，理由在 answer）")
     answer: Optional[str] = Field(default=None,
                                   description="终答文本；succeeded 时非空")
     sources: list[SourceDoc] = Field(
