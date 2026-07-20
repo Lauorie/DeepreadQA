@@ -197,7 +197,7 @@ def test_enricher_keyword_count_in_prompt():
 
 def test_enricher_default_keyword_count_is_five():
     from deepread_sdk.enrich import Enricher
-    from deepread_sdk.schema import RawSection, StructuredDoc
+    from deepread_sdk.schema import StructuredDoc
 
     captured = {}
 

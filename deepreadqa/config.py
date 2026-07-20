@@ -111,6 +111,10 @@ class Config:
         # the 180s default per-request timeout; expose it for eval campaigns.
         if "request_timeout_s" not in overrides and os.environ.get("DEEPREAD_REQUEST_TIMEOUT_S"):
             overrides["request_timeout_s"] = float(os.environ["DEEPREAD_REQUEST_TIMEOUT_S"])
+        # Launch-day channels (e.g. OpenRouter day-1 models) throw bursty 429s
+        # that outlast the default 2 retries; expose the per-endpoint budget.
+        if "max_retries_per_endpoint" not in overrides and os.environ.get("DEEPREAD_MAX_RETRIES"):
+            overrides["max_retries_per_endpoint"] = int(os.environ["DEEPREAD_MAX_RETRIES"])
         if "reasoning_effort" not in overrides and os.environ.get("DEEPREAD_REASONING_EFFORT"):
             overrides["reasoning_effort"] = os.environ["DEEPREAD_REASONING_EFFORT"].strip()
         if "verify_loop" not in overrides and "DEEPREAD_VERIFY" in os.environ:

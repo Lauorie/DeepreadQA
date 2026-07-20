@@ -4,7 +4,6 @@ Synthetic trajectories only; no real runs/ data required.
 """
 from __future__ import annotations
 
-import json
 import math
 import sys
 from pathlib import Path

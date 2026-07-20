@@ -1,4 +1,3 @@
-import os
 
 from deepreadqa.config import Config, Endpoint
 

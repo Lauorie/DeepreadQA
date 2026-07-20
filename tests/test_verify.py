@@ -1,7 +1,5 @@
 """Axis-② compose verify-repair loop: parser, probes, and harness wiring."""
-import os
 
-import pytest
 
 from deepread_sdk import Reader
 from deepreadqa import verify as vf
